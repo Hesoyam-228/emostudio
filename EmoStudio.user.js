@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoStudio
 // @namespace    local.emostudio
-// @version      1.7.2
+// @version      1.7.3
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -5037,8 +5037,8 @@
   //  Если автопоиск не находит кнопки — их можно один раз показать («Научить кнопкам»).
   // ======================================================================
   const BD_BADGES = [
-    { id: 'llama', n: '🦙 Лама', word: /llama|лам[аыу]/i, free: true },
-    { id: 'cake', n: '🎂 Тортик', word: /\bcake\b|торт/i, free: true },
+    { id: 'llama', n: '🦙 Лама', en: 'Give Llama badge', word: /llama|лам[аыу]/i, free: true },
+    { id: 'cake', n: '🎂 Тортик', en: 'Give Cake badge', word: /\bcake\b|торт/i, free: true },
   ];
   const BD_DEF = { badges: ['llama'], custom: '', watch: true, gap: 4, skipGiven: true, show: true };
   let bd = { ...BD_DEF };
@@ -5182,6 +5182,11 @@
     // только подписка в ответ — окно профиля не показываем
     bdFrame.classList.toggle('show', !!(bd.show && bdState.running && bdBadges().length) || !!bdState.teach);
     bdFrame.classList.toggle('teach', !!bdState.teach);
+    // при калибровке профиль — слева от окна «Ответки», чтобы подсказка с шагами оставалась видна
+    if (bdState.teach) {
+      const left = bdCard && !bdCard.hidden ? bdCard.getBoundingClientRect().left : innerWidth;
+      bdFrame.style.setProperty('--ts', Math.max(0.3, Math.min(0.62, (left - 32) / 1280, (innerHeight - 40) / 900)).toFixed(3));
+    }
   }
   const bdOpenUrl = (url) => new Promise((res) => {
     const f = bdFrameEl();
@@ -5202,13 +5207,16 @@
   const bdLab = (el) => (bdTxt(el) + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('title') || '')).trim();
   const BD_CLICK = 'button,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="option"],[role="tab"],a,label,li';
   const bdClickables = (root) => [...root.querySelectorAll(BD_CLICK)].filter(bdVis);
-  function bdClick(el) {
+  function bdClick(el, pt) {
     const w = el.ownerDocument.defaultView, r = el.getBoundingClientRect();
-    const o = { bubbles: true, cancelable: true, view: w, button: 0, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
-    try { el.dispatchEvent(new w.PointerEvent('pointerdown', o)); } catch (e) { /* нет PointerEvent */ }
-    el.dispatchEvent(new w.MouseEvent('mousedown', o));
-    try { el.dispatchEvent(new w.PointerEvent('pointerup', o)); } catch (e) { /* нет PointerEvent */ }
-    el.dispatchEvent(new w.MouseEvent('mouseup', o));
+    const o = { bubbles: true, cancelable: true, composed: true, view: w, button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true,
+      clientX: pt ? pt.x : r.left + r.width / 2, clientY: pt ? pt.y : r.top + r.height / 2 };
+    const P = (t, x) => { try { el.dispatchEvent(new w.PointerEvent(t, { ...o, ...x })); } catch (e) { /* нет PointerEvent */ } };
+    const M = (t, x) => el.dispatchEvent(new w.MouseEvent(t, { ...o, ...x }));
+    // сначала «наводим» — некоторые меню выбирают пункт, только если над ним была мышь
+    P('pointerover', { buttons: 0 }); M('mouseover', { buttons: 0 }); P('pointermove', { buttons: 0 }); M('mousemove', { buttons: 0 });
+    P('pointerdown'); M('mousedown');
+    P('pointerup', { buttons: 0 }); M('mouseup', { buttons: 0 });
     el.click();
   }
   function bdEsc() {
@@ -5231,6 +5239,20 @@
       if (s > bs) { bs = s; best = el; }
     }
     return bs >= 4 ? best : null;
+  }
+  // точка из калибровки: где человек нажал (относительно кнопки 🎁, если она известна — меню открывается от неё)
+  function bdRecPoint(rec, give) {
+    if (!rec || rec.x == null) return null;
+    if (give && give.isConnected && rec.dx != null) {
+      const g = give.getBoundingClientRect();
+      return { x: g.left + g.width / 2 + rec.dx, y: g.top + g.height / 2 + rec.dy };
+    }
+    return { x: rec.x, y: rec.y };
+  }
+  function bdAtPoint(doc, pt) {
+    if (!pt) return null;
+    const e = doc.elementFromPoint(pt.x, pt.y);
+    return e ? (e.closest(BD_CLICK) || e) : null;
   }
   // самый «глубокий» видимый элемент, чей текст подходит под test — сам пункт меню, а не весь список
   function bdLeaf(doc, test) {
@@ -5255,7 +5277,13 @@
   const BD_MORE_RE = /\bmore\b|options|ещё|•••|\.\.\./i;
   // кнопка подарка на профиле (значок 🎁 рядом с «Watch»)
   function bdFindGive(doc) {
-    if (bdSel.give) { const e = bdByDesc(doc, bdSel.give); if (e) return e; }
+    if (bdSel.give) {
+      const e = bdByDesc(doc, bdSel.give);
+      if (e) return e;
+      // по месту — только если там такой же элемент и это не кнопка «Watch»
+      const at = bdAtPoint(doc, bdRecPoint(bdSel.give));
+      if (at && at.tagName.toLowerCase() === bdSel.give.tag && !BD_WATCH_RE.test(bdTxt(at)) && !BD_WATCHING_RE.test(bdTxt(at))) return at;
+    }
     const c = bdClickables(doc);
     return c.find((e) => BD_GIVE_RE.test(bdTxt(e)))
       // значок без букв (картинка или эмодзи) с подписью «Give» / «Gift» для экранных чтецов
@@ -5268,8 +5296,13 @@
   const BD_TEXT_SEL = 'article,p,blockquote,[data-hook*="comment" i],[class*="comment" i],[class*="journal" i]';
   function bdFindOpt(doc, b, give) {
     const d = bdSel['opt:' + b.id];
-    // подсказка из «Научить кнопкам» — только если она и правда указывает на пункт с нужным бейджем
-    if (d) { const e = bdByDesc(doc, d); if (e && b.word.test(bdLab(e))) return e; }
+    // калибровка — только если она и правда указывает на пункт с нужным бейджем
+    if (d) {
+      const e = bdByDesc(doc, d);
+      if (e && b.word.test(bdLab(e))) return e;
+      const at = bdAtPoint(doc, bdRecPoint(d, give));
+      if (at && b.word.test(bdLab(at))) return at;
+    }
     const verb = /\b(give|gave|send|sent|already)\b|подар|уже/i;
     const hits = [];
     for (const e of doc.body.querySelectorAll('*')) {
@@ -5318,8 +5351,13 @@
   async function bdCloseSent() {
     const d = bdDoc();
     if (!d) return;
-    const close = bdLeaf(d, (t) => /^(close|закрыть|done|готово)$/i.test(t));
-    if (close) bdClick(bdTarget(close)); else bdEsc();
+    let close = null;
+    if (bdSel.close) {
+      close = bdByDesc(d, bdSel.close);
+      if (!close) { const at = bdAtPoint(d, bdRecPoint(bdSel.close)); if (at && at.closest('[role="dialog"],[aria-modal="true"]')) close = at; }
+    }
+    if (!close) close = bdTarget(bdLeaf(d, (t) => /^(close|закрыть|done|готово)$/i.test(t)));
+    if (close) bdClick(close); else bdEsc();
     await sleep(700);
     if (BD_SENT_RE.test(bdPageText(bdDoc()))) { bdEsc(); await sleep(500); }
   }
@@ -5343,12 +5381,18 @@
       const more = c.find((e) => !bdTxt(e) && BD_MORE_RE.test(e.getAttribute('aria-label') || '')) || c.find((e) => BD_MORE_RE.test(bdTxt(e)) && bdTxt(e).length < 8);
       if (more) { bdClick(more); give = await bdWait(bdFindGive, 3000); }
     }
-    if (!give) return { b, s: 'err', why: 'не нашёл кнопку подарка — нажмите «Научить кнопкам»' };
+    if (!give) return { b, s: 'err', why: 'не нашёл кнопку подарка — пройдите «Калибровку»' };
     bdClick(give);
-    const opt = await bdWait((d) => bdFindOpt(d, b, give), 6000);
-    if (!opt) { bdEsc(); await sleep(400); return { b, s: 'err', why: 'в меню нет «' + b.n + '»' }; }
+    let opt = await bdWait((d) => bdFindOpt(d, b, give), 6000);
+    if (!opt) { bdEsc(); await sleep(400); return { b, s: 'err', why: 'в меню нет «' + b.n + '» — пройдите «Калибровку»' }; }
+    // меню ещё «выезжает» — клик в этот момент DA может пропустить
+    await sleep(500);
+    opt = bdFindOpt(bdDoc(), b, give) || opt;
     if (isOff(opt) || BD_ALREADY_RE.test(bdTxt(opt))) { bdRemember(user, b); bdEsc(); await sleep(400); return { b, s: 'skip' }; }
-    bdClickAt(opt);
+    const optTxt = bdTxt(opt).slice(0, 32);
+    const pt = bdRecPoint(bdSel['opt:' + b.id], give);
+    const at = bdAtPoint(bdDoc(), pt);
+    if (at && (opt.contains(at) || at.contains(opt))) bdClick(bdDoc().elementFromPoint(pt.x, pt.y), pt); else bdClickAt(opt);
     // ждём окно «Devious vibes sent!»; если DA сначала спрашивает подтверждение — жмём его
     let confirmed = false, tries = 0;
     const res = await bdWait((d) => {
@@ -5368,7 +5412,7 @@
     if (res === 'already') { bdRemember(user, b); bdEsc(); await sleep(400); return { b, s: 'skip' }; }
     if (res === 'poor') { bdEsc(); return { b, s: 'err', why: 'не хватает поинтов', stop: true }; }
     bdEsc(); await sleep(400);
-    return { b, s: 'err', why: 'не увидел «Devious vibes sent!» после «' + b.n + '»' };
+    return { b, s: 'err', why: 'нажал «' + optTxt + '», но «Devious vibes sent!» не появилось — пройдите «Калибровку»' };
   }
   // подписаться в ответ: сначала кнопкой прямо в уведомлениях, если её нет — на открытом профиле
   async function bdWatchBack(user, onProfile) {
@@ -5442,7 +5486,7 @@
   .bd-teach .pbtn{margin-top:8px;padding:5px 12px;font-size:11.5px}
   .bd-frame{position:fixed;left:-4000px;top:0;width:1280px;height:900px;border:0;opacity:0;pointer-events:none;background:#000;z-index:1}
   .bd-frame.show{left:14px;top:auto;bottom:14px;opacity:1;transform:scale(.3);transform-origin:left bottom;border-radius:30px;box-shadow:0 10px 40px rgba(0,0,0,.55),0 0 0 4px var(--a1)}
-  .bd-frame.teach{left:50%;top:50%;bottom:auto;transform:translate(-50%,-50%) scale(.6);transform-origin:center;pointer-events:auto;z-index:4;border-radius:20px}`;
+  .bd-frame.teach{left:14px;top:50%;bottom:auto;transform:translateY(-50%) scale(var(--ts,.55));transform-origin:left center;pointer-events:auto;z-index:4;border-radius:20px}`;
 
   const BD_HTML = `
   <div class="panel ai bd" id="bdCard" data-theme="dark" hidden role="dialog" aria-label="EmoStudio — Ответка">
@@ -5463,7 +5507,7 @@
       <div class="bd-tools">
         <button class="pbtn main" id="bdScan">Сканировать всё</button>
         <button class="pbtn" id="bdPick">Только видимые</button>
-        <button class="pbtn" id="bdTeach">Научить кнопкам</button>
+        <button class="pbtn" id="bdTeach" title="Один раз нажмите сами: 🎁 → бейдж → Close — скрипт запомнит и будет повторять">Калибровка</button>
       </div>
       <div class="group">
         <div class="row inline"><div><span>Пауза между людьми</span><small>секунд</small></div>${schStepper('bdGap', 'Пауза, сек')}</div>
@@ -5519,7 +5563,7 @@
     bdQ('#bdScan').disabled = bdState.running || !!bdState.teach;
     ['#bdPick', '#bdTeach'].forEach((s) => { bdQ(s).disabled = bdState.running || bdState.scanning || !!bdState.teach; });
     bdQ('#bdGo').disabled = bdState.scanning || !!bdState.teach;
-    bdQ('#bdTeach').textContent = Object.keys(bdSel).length ? 'Научить заново' : 'Научить кнопкам';
+    bdQ('#bdTeach').textContent = Object.keys(bdSel).length ? 'Калибровка ✓' : 'Калибровка';
     bdPaintUsers();
     bdFramePaint();
   }
@@ -5536,59 +5580,92 @@
   }
   function bdClose() { if (!bdCard) return; bdCard.hidden = true; cardRestorePanel(bdCard); }
 
-  // ---------- «Научить кнопкам»: показываете один раз на профиле первого человека ----------
+  // ---------- «Калибровка»: человек один раз сам нажимает 🎁 → бейдж → Close (для каждого бейджа),
+  // скрипт запоминает и что нажато, и куда именно, и дальше повторяет так же ----------
   const BD_TEACH_TXT = {
-    give: ['Кнопка подарка', 'Нажмите в окне значок подарка 🎁 рядом с «Watch». Если он в меню «…» — сначала откройте меню.'],
-    opt: ['Пункт меню', 'Нажмите в меню пункт'],
-    ok: ['Подтверждение', 'Если DA спрашивает подтверждение — нажмите его. Если сразу появилось «Devious vibes sent!» — «Готово».'],
+    give: ['Кнопка подарка', 'Нажмите в окне значок подарка 🎁 рядом с «Watch». Если он спрятан в меню «…» — сначала откройте меню.'],
+    opt: ['Пункт меню', 'Нажмите в меню'],
+    close: ['Закрыть', 'Появилось «Devious vibes sent!» — нажмите «Close». Если DA сначала спросил «точно?» — подтвердите, затем «Close».'],
   };
   function bdTeachPaint() {
     const t = bdState.teach, box = bdQ('#bdTeachBox');
     if (!t) { box.innerHTML = ''; return; }
-    const k = t.steps[t.i].split(':')[0], [h, d] = BD_TEACH_TXT[k];
-    box.innerHTML = '<div class="bd-teach"><b></b><span></span><br><button class="pbtn" id="bdTeachNext"></button> <button class="pbtn" id="bdTeachStop">Отмена</button></div>';
-    box.querySelector('b').textContent = 'Шаг ' + (t.i + 1) + ' из ' + t.steps.length + ': ' + h;
-    box.querySelector('span').textContent = k === 'opt' ? d + ' «' + t.b.n + '» (например, «Give Cake badge»).' : d;
-    const nx = box.querySelector('#bdTeachNext');
-    nx.textContent = k === 'ok' ? 'Готово' : 'Пропустить';
-    nx.onclick = () => bdTeachStep(null);
+    const st = t.steps[t.i], [h, d] = BD_TEACH_TXT[st.k];
+    box.innerHTML = '<div class="bd-teach"><b></b><span></span><br><button class="pbtn" id="bdTeachNext">Пропустить</button> <button class="pbtn" id="bdTeachStop">Отмена</button></div>';
+    box.querySelector('b').textContent = 'Шаг ' + (t.i + 1) + ' из ' + t.steps.length + ' · ' + st.b.n + ': ' + h;
+    box.querySelector('span').textContent = st.k === 'opt' ? d + ' «' + st.b.en + '».' : d;
+    box.querySelector('#bdTeachNext').onclick = () => bdTeachStep();
     box.querySelector('#bdTeachStop').onclick = () => bdTeachEnd(false);
   }
-  function bdTeachClick(e) {
-    const t = bdState.teach;
-    if (!t || !e.target || !e.target.closest) return;
-    const el = e.target.closest(BD_CLICK) || e.target;
-    if (el) bdTeachStep(el);
+  function bdTeachSave(key, el, e) {
+    const rec = { ...bdDesc(el), x: Math.round(e.clientX), y: Math.round(e.clientY) };
+    // пункты меню — ещё и относительно 🎁: если кнопка на другом профиле стоит чуть иначе, меню сдвинется вместе с ней
+    const g = bdSel.give && bdByDesc(bdDoc(), bdSel.give);
+    if (g && key !== 'give') { const r = g.getBoundingClientRect(); rec.dx = Math.round(e.clientX - (r.left + r.width / 2)); rec.dy = Math.round(e.clientY - (r.top + r.height / 2)); }
+    bdSel[key] = rec;
+    GM_setValue('bdSel', JSON.stringify(bdSel));
   }
-  function bdTeachStep(el) {
+  // ловим нажатие ещё до того, как DA его обработает (меню может закрыться и подменить элемент)
+  function bdTeachRec(e) {
+    const t = bdState.teach;
+    if (!t || !e.isTrusted || !e.target || !e.target.closest) return;
+    const now = Date.now();
+    if (now - (t.last || 0) < 350) return; // один клик — один шаг
+    const btn = e.target.closest(BD_CLICK), el = btn || e.target, st = t.steps[t.i], d = bdDoc(), lab = bdLab(el);
+    // промахнулись — шаг не засчитываем, просто подсказываем
+    const miss = (why) => { bdStatus(why, 'err'); };
+    if (st.k === 'give') {
+      if (!btn) return miss('Это не кнопка — нажмите значок подарка 🎁');
+      if (BD_MORE_RE.test(lab) && lab.length < 12) return; // открыли меню «…» — подарок, видимо, внутри
+      if (BD_WATCH_RE.test(bdTxt(el)) || BD_WATCHING_RE.test(bdTxt(el))) return miss('Это «Watch» — нужен значок подарка 🎁 рядом с ним');
+    }
+    if (st.k === 'opt' && !st.b.word.test(lab)) return miss('Нужен пункт «' + st.b.en + '» — в нём должно быть слово ' + (st.b.id === 'llama' ? 'Llama' : 'Cake'));
+    if (st.k === 'close' && !el.closest('[role="dialog"],[aria-modal="true"]') && !/close|закрыть|done|готово|ok|give|confirm|×|✕/i.test(lab)) return miss('Нажмите «Close» в окне «Devious vibes sent!»');
+    t.last = now;
+    bdStatus('Профиль ' + t.user + ' — так, дальше по подсказке');
+    if (st.k === 'close') {
+      // DA спросил подтверждение, а «Devious vibes sent!» ещё нет — это кнопка «Give», шаг «Закрыть» остаётся
+      if (d && !BD_SENT_RE.test(bdPageText(d)) && bdPopups(d).length) { bdTeachSave('ok', el, e); return; }
+      bdTeachSave('close', el, e);
+    } else bdTeachSave(st.k === 'opt' ? 'opt:' + st.b.id : 'give', el, e);
+    if (st.k === 'opt') bdRemember(t.user, st.b);
+    bdTeachStep();
+  }
+  function bdTeachStep() {
     const t = bdState.teach;
     if (!t) return;
-    if (el) { bdSel[t.steps[t.i]] = bdDesc(el); GM_setValue('bdSel', JSON.stringify(bdSel)); }
     t.i++;
     if (t.i >= t.steps.length) bdTeachEnd(true); else bdTeachPaint();
   }
   async function bdTeach() {
     if (bdState.running || bdState.teach) return;
-    const user = bdChosen()[0], b = bdBadges()[0];
-    if (!user) return bdStatus('Сначала соберите людей — покажу кнопки на профиле первого', 'err');
-    if (!b) return bdStatus('Выберите, какой бейдж дарим', 'err');
+    const badges = bdBadges();
+    if (!badges.length) return bdStatus('Выберите, какие бейджи дарим — ламу, тортик или оба', 'err');
+    // профиль человека, которому эти бейджи ещё не дарили, — чтобы в меню были живые пункты
+    const user = bdChosen().find((u) => !badges.some((b) => bdHas(u, b))) || bdChosen()[0];
+    if (!user) return bdStatus('Сначала соберите людей — калибровка идёт на профиле первого', 'err');
     bdSel = {}; GM_setValue('bdSel', '{}');
-    bdState.teach = { i: 0, b, user, steps: ['give', 'opt:' + b.id, 'ok'] };
+    const steps = [];
+    badges.forEach((b) => steps.push({ k: 'give', b }, { k: 'opt', b }, { k: 'close', b }));
+    bdState.teach = { i: 0, user, steps };
     bdPaint(); bdTeachPaint();
-    bdStatus('Открываю профиль ' + user + '… Нажимайте прямо в окне посередине экрана. Бейдж правда подарится — так и задумано.');
+    bdStatus('Открываю профиль ' + user + '… Нажимайте прямо в окне посередине экрана. Бейджи правда подарятся — так и задумано.');
     const ok = await bdOpenUrl(location.origin + '/' + encodeURIComponent(user));
     const doc = bdDoc();
     if (!bdState.teach) return;
     if (!ok || !doc) { bdTeachEnd(false); bdStatus('Профиль не открылся в окне — DeviantArt, похоже, это запрещает', 'err'); return; }
-    doc.addEventListener('click', bdTeachClick, true);
+    doc.addEventListener('pointerdown', bdTeachRec, true);
+    doc.addEventListener('mousedown', bdTeachRec, true);
+    bdStatus('Профиль ' + user + ' открыт — нажимайте по шагам из подсказки выше');
   }
   function bdTeachEnd(done) {
     const d = bdDoc();
-    if (d) d.removeEventListener('click', bdTeachClick, true);
+    if (d) { d.removeEventListener('pointerdown', bdTeachRec, true); d.removeEventListener('mousedown', bdTeachRec, true); }
     bdState.teach = null;
+    if (bdFrame) bdFrame.src = 'about:blank';
     bdTeachPaint(); bdPaint();
-    if (done) bdStatus('Запомнил кнопки. Теперь «Ответить всем» — дальше всё сам', 'ok');
-    else bdStatus('Обучение отменено');
+    if (done) bdStatus('Калибровка готова — запомнил, куда нажимать. Теперь «Ответить всем»', 'ok');
+    else bdStatus('Калибровка отменена');
   }
 
   // ---------- запуск ----------
