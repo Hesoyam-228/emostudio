@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoStudio
 // @namespace    local.emostudio
-// @version      1.7.3
+// @version      1.7.4
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -5325,7 +5325,19 @@
       if (g) { const r = h.getBoundingClientRect(); sc -= Math.min(8, Math.hypot(r.left + r.width / 2 - (g.left + g.width / 2), r.top - g.bottom) / 120); }
       if (sc > bs) { bs = sc; best = h; }
     }
-    return best && bs > -6 ? bdTarget(best) : null;
+    return best && bs > 2 ? bdTarget(best) : null;
+  }
+  // меню DA сначала рисуется «заготовкой» и через миг перерисовывается настоящими пунктами —
+  // клик по заготовке пропадает. Ждём, пока найденный пункт перестанет меняться
+  async function bdStableOpt(b, give, first) {
+    let cur = first, same = 0;
+    for (let t = 0; t < 5000; t += 200) {
+      await sleep(200);
+      const d = bdDoc();
+      const n = d && d.body ? bdFindOpt(d, b, give) : null;
+      if (n && n === cur && n.isConnected) { if (++same >= 4) return n; } else { if (n) cur = n; same = 0; }
+    }
+    return cur && cur.isConnected ? cur : bdFindOpt(bdDoc(), b, give);
   }
   // нажать так, как нажал бы человек: по элементу, который реально лежит сверху в центре пункта
   function bdClickAt(el) {
@@ -5347,6 +5359,20 @@
   const BD_ALREADY_RE = /already (been )?(given|gave|sent|received)|already gave|can only (give|send)|only one|уже (подар|дал|отправ)|можно (подарить|дать) только/i;
   const BD_POOR_RE = /not enough points|insufficient|недостаточно|не хватает/i;
   const bdPageText = (doc) => (doc.body.innerText || '').slice(0, 20000);
+  // текст всплывающих окон: DA добавляет их в самый конец страницы. Весь текст профиля смотреть нельзя —
+  // в комментариях часто пишут «you gave me a llama badge», а длинный профиль до окна не дочитать
+  function bdOverlayText(doc) {
+    if (!doc || !doc.body) return '';
+    const els = new Set([...doc.querySelectorAll('[role="dialog"],[aria-modal="true"],[role="alertdialog"]'), ...[...doc.body.children].slice(-15)]);
+    let out = '';
+    for (const e of els) {
+      if (e.tagName === 'SCRIPT' || e.tagName === 'STYLE') continue;
+      const t = e.innerText || '';
+      if (t && t.length < 2500) out += t + '\n';
+    }
+    return out;
+  }
+  const bdSentNow = (doc) => BD_SENT_RE.test(bdOverlayText(doc));
   // закрыть окно «Devious vibes sent!» кнопкой Close (или крестиком), чтобы дарить следующий бейдж без перезагрузки
   async function bdCloseSent() {
     const d = bdDoc();
@@ -5359,7 +5385,7 @@
     if (!close) close = bdTarget(bdLeaf(d, (t) => /^(close|закрыть|done|готово)$/i.test(t)));
     if (close) bdClick(close); else bdEsc();
     await sleep(700);
-    if (BD_SENT_RE.test(bdPageText(bdDoc()))) { bdEsc(); await sleep(500); }
+    if (bdSentNow(bdDoc())) { bdEsc(); await sleep(500); }
   }
   async function bdWait(fn, ms) {
     for (let t = 0; t <= ms; t += 400) {
@@ -5374,7 +5400,7 @@
   // подарить один бейдж на уже открытом профиле
   async function bdGiveBadge(user, b) {
     // окно прошлого подарка ещё открыто — закрываем, иначе примем его за новый успех
-    if (bdDoc() && bdDoc().body && BD_SENT_RE.test(bdPageText(bdDoc()))) await bdCloseSent();
+    if (bdDoc() && bdDoc().body && bdSentNow(bdDoc())) await bdCloseSent();
     let give = await bdWait(bdFindGive, 12000);
     if (!give && bdState.running) { // кнопка могла спрятаться в меню «…»
       const c = bdClickables(bdDoc());
@@ -5385,29 +5411,33 @@
     bdClick(give);
     let opt = await bdWait((d) => bdFindOpt(d, b, give), 6000);
     if (!opt) { bdEsc(); await sleep(400); return { b, s: 'err', why: 'в меню нет «' + b.n + '» — пройдите «Калибровку»' }; }
-    // меню ещё «выезжает» — клик в этот момент DA может пропустить
-    await sleep(500);
-    opt = bdFindOpt(bdDoc(), b, give) || opt;
+    // меню ещё «выезжает» и перерисовывается — клик в этот момент DA пропускает
+    opt = (await bdStableOpt(b, give, opt)) || opt;
     if (isOff(opt) || BD_ALREADY_RE.test(bdTxt(opt))) { bdRemember(user, b); bdEsc(); await sleep(400); return { b, s: 'skip' }; }
     const optTxt = bdTxt(opt).slice(0, 32);
-    const pt = bdRecPoint(bdSel['opt:' + b.id], give);
-    const at = bdAtPoint(bdDoc(), pt);
-    if (at && (opt.contains(at) || at.contains(opt))) bdClick(bdDoc().elementFromPoint(pt.x, pt.y), pt); else bdClickAt(opt);
+    const press = (o) => {
+      const pt = bdRecPoint(bdSel['opt:' + b.id], give), at = bdAtPoint(bdDoc(), pt);
+      if (at && (o.contains(at) || at.contains(o))) bdClick(bdDoc().elementFromPoint(pt.x, pt.y), pt); else bdClickAt(o);
+    };
+    press(opt);
     // ждём окно «Devious vibes sent!»; если DA сначала спрашивает подтверждение — жмём его
     let confirmed = false, tries = 0;
     const res = await bdWait((d) => {
-      const t = bdPageText(d);
+      const t = bdOverlayText(d);
       if (BD_SENT_RE.test(t)) return 'ok';
-      // пункт меню всё ещё на месте — клик не дошёл: жмём ещё раз, потом Enter, как с клавиатуры
-      if (++tries % 6 === 0 && tries <= 12 && opt.isConnected && bdVis(opt) && !bdPopups(d).length) {
-        if (tries === 6) bdClickAt(opt);
-        else { if (opt.focus) opt.focus(); for (const ty of ['keydown', 'keyup']) opt.dispatchEvent(new d.defaultView.KeyboardEvent(ty, { key: 'Enter', code: 'Enter', bubbles: true })); }
+      // пункт меню всё ещё виден — клик не дошёл: ищем пункт заново (меню могло перерисоваться) и жмём ещё раз, потом Enter
+      if (++tries % 5 === 0 && tries <= 15 && !bdPopups(d).length) {
+        const o = bdFindOpt(d, b, give);
+        if (o && bdVis(o) && !isOff(o)) {
+          if (tries < 15) press(o);
+          else { if (o.focus) o.focus(); for (const ty of ['keydown', 'keyup']) o.dispatchEvent(new d.defaultView.KeyboardEvent(ty, { key: 'Enter', code: 'Enter', bubbles: true })); }
+        }
       }
       if (BD_POOR_RE.test(t)) return 'poor';
       if (bdPopups(d).some((p) => BD_ALREADY_RE.test(bdTxt(p)))) return 'already';
       if (!confirmed) { const ok = bdFindOk(d); if (ok) { confirmed = true; bdClick(ok); } }
       return null;
-    }, 9000);
+    }, 10000);
     if (res === 'ok') { bdRemember(user, b); await bdCloseSent(); return { b, s: 'ok' }; }
     if (res === 'already') { bdRemember(user, b); bdEsc(); await sleep(400); return { b, s: 'skip' }; }
     if (res === 'poor') { bdEsc(); return { b, s: 'err', why: 'не хватает поинтов', stop: true }; }
@@ -5625,7 +5655,7 @@
     bdStatus('Профиль ' + t.user + ' — так, дальше по подсказке');
     if (st.k === 'close') {
       // DA спросил подтверждение, а «Devious vibes sent!» ещё нет — это кнопка «Give», шаг «Закрыть» остаётся
-      if (d && !BD_SENT_RE.test(bdPageText(d)) && bdPopups(d).length) { bdTeachSave('ok', el, e); return; }
+      if (d && !bdSentNow(d) && bdPopups(d).length) { bdTeachSave('ok', el, e); return; }
       bdTeachSave('close', el, e);
     } else bdTeachSave(st.k === 'opt' ? 'opt:' + st.b.id : 'give', el, e);
     if (st.k === 'opt') bdRemember(t.user, st.b);
