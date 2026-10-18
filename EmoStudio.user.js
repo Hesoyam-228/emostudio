@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoStudio
 // @namespace    local.emostudio
-// @version      1.7.4
+// @version      1.7.5
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -4146,7 +4146,7 @@
   // Gemini — бесплатный ключ на aistudio.google.com (у моделей Flash есть бесплатный лимит), Grok — платный
   const AI_PROVIDERS = {
     gemini: {
-      n: 'Gemini', tag: 'бесплатно', keyRe: /^AIza[\w-]{20,}$/, keyPh: 'AIza…', where: 'aistudio.google.com → Get API key (бесплатно, карта не нужна)',
+      n: 'Gemini', tag: 'бесплатно', keyRe: /^[\w.\-]{30,}$/, keyPh: 'вставьте ключ из AI Studio', where: 'aistudio.google.com → Get API key (бесплатно, карта не нужна)',
       models: [
         { id: 'gemini-3.8-flash', n: '3.8 Flash', d: 'умнее' },
         { id: 'gemini-2.5-flash', n: '2.5 Flash', d: 'надёжнее' },
@@ -4154,7 +4154,7 @@
       ],
     },
     grok: {
-      n: 'Grok', tag: 'платно', keyRe: /^xai-/, keyPh: 'xai-…', where: 'console.x.ai → API Keys (нужен баланс)',
+      n: 'Grok', tag: 'платно', keyRe: /^xai-\S{10,}$/, keyPh: 'xai-…', where: 'console.x.ai → API Keys (нужен баланс)',
       models: [
         { id: 'grok-4.7', n: 'Grok 4.7', d: 'умнее' },
         { id: 'grok-4.3', n: 'Grok 4.3', d: 'дешевле' },
@@ -4227,7 +4227,8 @@
   }
   function aiErr(status, j) {
     const e = j && j.error, m = (e && (e.message || (typeof e === 'string' ? e : ''))) || (j && j.message) || '', n = aiProv().n;
-    if (status === 401 || status === 403) return 'Ключ ' + n + ' не подходит — проверьте его в ⚙' + (m ? ' (' + String(m).slice(0, 80) + ')' : '');
+    if (status === 401 || status === 403 || /api key|api_key|permission|unauthori[sz]ed/i.test(m)) return 'Ключ ' + n + ' не подходит — скопируйте его заново в AI Studio' + (m ? ' (' + String(m).slice(0, 80) + ')' : '');
+    if (status === 0) return 'Нет связи с ' + n + ' — разрешите скрипту доступ, если Tampermonkey спрашивает';
     if (status === 404) return n + ' не знает такую модель — выберите другую в ⚙';
     if (status === 429) return ai.provider === 'gemini' ? 'Бесплатный лимит Gemini на сейчас закончился — подождите минуту' : 'Слишком много запросов или кончились деньги на балансе xAI';
     if (status >= 500) return n + ' сейчас перегружен — попробуйте ещё раз';
@@ -4269,6 +4270,33 @@
     throw lastErr || new Error('Gemini недоступен');
   }
   const aiCallAI = () => (ai.provider === 'gemini' ? aiGemini() : aiGrok());
+  // проверка ключа одним маленьким запросом — чтобы сразу было видно, работает он или нет
+  const aiKeyCheck = {}; // provider → { k, ok }
+  async function aiTestKey() {
+    const prov = ai.provider, k = aiKey();
+    if (!k) return null;
+    let res;
+    try {
+      if (prov === 'gemini') {
+        const ms = AI_PROVIDERS.gemini.models.map((m) => m.id), first = ai.models.gemini;
+        let last = null;
+        for (const model of [first, ...ms.filter((m) => m !== first)]) {
+          const r = await aiPost('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', { 'x-goog-api-key': k },
+            { contents: [{ role: 'user', parts: [{ text: 'Reply with the single word: ok' }] }], generationConfig: { maxOutputTokens: 20 } });
+          if (r.status >= 200 && r.status < 300) { if (model !== first) { ai.models.gemini = model; aiSave(); } res = { ok: true, msg: 'Ключ работает ✓ — тексты пишет Gemini (' + (AI_PROVIDERS.gemini.models.find((m) => m.id === model) || {}).n + ')' }; break; }
+          last = r;
+          if (!(r.status === 404 || r.status === 429)) break;
+        }
+        if (!res) res = last && last.status === 429 ? { ok: true, msg: 'Ключ принят, но бесплатный лимит на эту минуту исчерпан — подождите минуту' }
+          : { ok: false, msg: aiErr(last ? last.status : 0, last && last.j) };
+      } else {
+        await aiGrok();
+        res = { ok: true, msg: 'Ключ работает ✓ — тексты пишет Grok' };
+      }
+    } catch (e) { res = { ok: false, msg: (e && e.message) || 'Не получилось проверить ключ' }; }
+    aiKeyCheck[prov] = { k, ok: res.ok };
+    return res;
+  }
   // ответ — JSON {"variants": [...]}, но если модель ответила просто строками, понимаем и так
   function aiParse(txt) {
     const clean = (a) => a.map((s) => String(s).trim().replace(/^["«“]+|["»”]+$/g, '').trim()).filter((s) => s.length > 1);
@@ -4577,6 +4605,8 @@
   .ai-g{margin-bottom:10px}
   .ai-g small{margin-top:6px}
   .ai-key{display:flex;gap:6px;margin-top:8px}
+  #aiKeyMsg{margin:6px 2px 4px}
+  .pill[data-s=bad]{color:var(--err);background:rgba(255,69,58,.16)}
   .ai-key input{flex:1;min-width:0;padding:7px 10px;border:0;border-radius:10px;outline:none;background:var(--tile);color:var(--text);font:inherit;font-size:12px}
   .ai-key input:focus{box-shadow:inset 0 0 0 1.5px var(--a1)}
   .ai-g .ai-chips{margin:8px 0 0}
@@ -4605,6 +4635,7 @@
         <div class="row">
           <div class="rl"><span id="aiKeyL">Ключ</span><span class="pill" id="aiKeyPill" data-s="none">нет</span></div>
           <div class="ai-key"><input type="password" id="aiKey" autocomplete="off" spellcheck="false" aria-label="Ключ ИИ"><button class="pbtn" id="aiKeySave">Сохранить</button></div>
+          <p class="ai-st" id="aiKeyMsg" hidden></p>
           <small id="aiKeyHelp"></small>
         </div>
         <div class="row"><div class="rl"><span>Модель</span></div><div class="ai-chips" id="aiModel"></div></div>
@@ -4667,7 +4698,10 @@
     aiQ('#aiTo').textContent = aiNow.name ? 'для @' + aiNow.name + ' ×' : '';
     const k = aiKey();
     aiQ('#aiSub').textContent = 'Помощник ответов · ' + (k ? aiModelName() : 'офлайн');
-    const pill = aiQ('#aiKeyPill'); pill.dataset.s = k ? 'ver' : 'none'; pill.textContent = k ? '…' + k.slice(-4) : 'нет';
+    const pill = aiQ('#aiKeyPill'), ck = aiKeyCheck[ai.provider];
+    const st = !k ? 'none' : ck && ck.k === k ? (ck.ok ? 'ver' : 'bad') : 'unver';
+    pill.dataset.s = st;
+    pill.textContent = st === 'none' ? 'нет' : st === 'ver' ? 'работает ✓' : st === 'bad' ? 'не работает' : '…' + k.slice(-4);
     aiQ('#aiKey').placeholder = k ? 'сохранён — вставьте новый, чтобы заменить' : P.keyPh;
   }
   // окно выросло (варианты, настройки) — снова уходим от лайкера, если его не двигали руками, и держимся в экране
@@ -4873,14 +4907,30 @@
     paintSet(false);
     setBtn.onclick = () => paintSet(setFold.classList.contains('off'));
     const keyIn = aiQ('#aiKey');
-    aiQ('#aiKeySave').onclick = () => {
-      const v = keyIn.value.trim(), P = aiProv();
-      if (v && !P.keyRe.test(v)) { aiStatus('Это не похоже на ключ ' + P.n + ' — он начинается с ' + P.keyPh.replace('…', ''), 'err'); return; }
+    // сообщение прямо под полем ключа — его видно, а не где-то внизу окна
+    const keyMsg = (t, kind) => { const m = aiQ('#aiKeyMsg'); m.hidden = !t; m.textContent = t || ''; m.className = 'ai-st' + (kind ? ' ' + kind : ''); requestAnimationFrame(aiFit); };
+    const saveBtn = aiQ('#aiKeySave');
+    saveBtn.onclick = async () => {
+      const v = keyIn.value.replace(/\s+/g, ''), P = aiProv();
+      if (!v && aiKey()) { // поле пустое — проверить уже сохранённый ключ
+        keyMsg('Проверяю ключ…');
+        const r = await aiTestKey(); aiPaint(); keyMsg(r.msg, r.ok ? 'ok' : 'err');
+        return;
+      }
+      if (!v) { keyMsg('Вставьте ключ в поле и нажмите «Сохранить»', 'err'); return; }
+      if (!P.keyRe.test(v)) { keyMsg('Это не похоже на ключ ' + P.n + ' — скопируйте его целиком (кнопка копирования рядом с ключом в AI Studio)', 'err'); return; }
       ai.keys[ai.provider] = v; aiSave(); keyIn.value = ''; aiPaint();
-      aiStatus(v ? 'Ключ сохранён — теперь тексты пишет ' + P.n : 'Ключ удалён — работает офлайн-генератор', 'ok');
-      if (v) aiSoon(300);
+      keyMsg('Ключ сохранён, проверяю…');
+      saveBtn.disabled = true;
+      const r = await aiTestKey();
+      saveBtn.disabled = false;
+      aiPaint(); keyMsg(r.msg, r.ok ? 'ok' : 'err');
+      if (r.ok) aiSoon(300);
     };
-    keyIn.onkeydown = (e) => { if (e.key === 'Enter') aiQ('#aiKeySave').click(); };
+    keyIn.onkeydown = (e) => { if (e.key === 'Enter') saveBtn.click(); };
+    // вставили ключ — сохраняем сами, без «Сохранить»
+    keyIn.addEventListener('paste', () => setTimeout(() => { if (aiProv().keyRe.test(keyIn.value.replace(/\s+/g, ''))) saveBtn.click(); }, 50));
+    saveBtn.title = 'Сохранить и проверить ключ (с пустым полем — проверить сохранённый)';
 
     cardChrome(aiCard, aiQ('#aiHead'), aiQ('#aiMin'));
     // волна от нажатий, как в панели
