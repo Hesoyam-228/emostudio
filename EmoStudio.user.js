@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoStudio
 // @namespace    local.emostudio
-// @version      1.7
+// @version      1.7.1
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -5597,21 +5597,20 @@
 
   // ---------- кнопка «Ответка» рядом с «Mark All as Read»: своя, в стиле EmoStudio ----------
   const BD_BTN_CSS = `
-  :host{display:flex;justify-content:center;margin-top:12px}
-  button{all:unset;box-sizing:border-box;cursor:pointer;display:inline-flex;align-items:center;gap:9px;height:34px;padding:0 15px 0 4px;border-radius:99px;
-    font:700 13px/1 ${FONTS.sys};letter-spacing:-.01em;color:#fff;position:relative;overflow:hidden;
+  :host{display:flex!important;justify-content:center;flex:none!important;width:100%;margin:10px 0 2px!important;height:auto!important;overflow:visible!important}
+  button{all:unset;box-sizing:border-box;cursor:pointer;display:inline-flex;align-items:center;gap:7px;height:var(--h,30px);min-width:var(--w,0);padding:0 16px 0 4px;border-radius:99px;
+    font:700 12.5px/1 ${FONTS.sys};letter-spacing:-.005em;color:#fff;white-space:nowrap;position:relative;overflow:hidden;
     background:linear-gradient(135deg,var(--a1),var(--am) 55%,var(--a2));
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.32),0 6px 18px -4px rgba(var(--amrgb),.7);transition:transform .35s cubic-bezier(.2,1.2,.3,1),filter .25s}
-  button::after{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent 35%,rgba(255,255,255,.3) 50%,transparent 65%);transform:translateX(-120%);animation:sheen 5s ease-in-out 1s infinite}
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 4px 14px -5px rgba(var(--amrgb),.75);transition:transform .3s cubic-bezier(.2,1.2,.3,1),filter .2s}
+  button::after{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent 35%,rgba(255,255,255,.28) 50%,transparent 65%);transform:translateX(-120%);animation:sheen 5s ease-in-out 1s infinite}
   @keyframes sheen{0%,70%{transform:translateX(-120%)}90%,100%{transform:translateX(120%)}}
-  button:hover{transform:translateY(-1px) scale(1.03);filter:brightness(1.07)}
-  button:active{transform:scale(.96)}
-  .lg{flex:none;width:40px;height:26px;border-radius:99px;display:grid;place-items:center;background:var(--logo);box-shadow:inset 0 1px 0 rgba(255,255,255,.14)}
-  .lg svg{width:32px;height:15px;overflow:visible}
+  button:hover{transform:translateY(-1px);filter:brightness(1.08)}
+  button:active{transform:scale(.97)}
+  button:focus-visible{outline:2px solid #fff;outline-offset:2px}
+  .lg{flex:none;width:calc(var(--h,30px) + 6px);height:calc(var(--h,30px) - 8px);border-radius:99px;display:grid;place-items:center;background:var(--logo);box-shadow:inset 0 1px 0 rgba(255,255,255,.14)}
+  .lg svg{width:72%;height:auto;overflow:visible}
   .e-lid,.e-iris path{fill:#fff}
   .e-pupil{fill:var(--a1l)}
-  .t{display:flex;flex-direction:column;gap:2px}
-  small{font-size:10px;font-weight:600;opacity:.82}
   @media (prefers-reduced-motion:reduce){button::after{animation:none}}`;
   let bdBtnHost = null;
   function bdBtnTheme() {
@@ -5627,7 +5626,11 @@
     bdBtnHost = document.createElement('span');
     bdBtnHost.setAttribute('data-es-bd', '1');
     const sh = bdBtnHost.attachShadow({ mode: 'open' });
-    sh.innerHTML = '<style>' + BD_BTN_CSS + '</style><button type="button" title="EmoStudio: ламы, тортики и подписки в ответ всем из уведомлений"><span class="lg">' + EYE_SVG + '</span><span class="t">Ответка<small>ламы · тортики · подписки</small></span></button>';
+    sh.innerHTML = '<style>' + BD_BTN_CSS + '</style><button type="button" title="EmoStudio · Ответка: ламы, тортики и подписки в ответ всем из уведомлений"><span class="lg">' + EYE_SVG + '</span>Ответка</button>';
+    // высота как у «Mark All as Read», чтобы кнопки смотрелись парой
+    const mr = m.getBoundingClientRect();
+    bdBtnHost.style.setProperty('--h', Math.max(28, Math.min(36, Math.round(mr.height) || 30)) + 'px');
+    bdBtnHost.style.setProperty('--w', Math.min(220, Math.round(mr.width) || 0) + 'px');
     sh.querySelector('button').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); bdOpen(); });
     bdBtnTheme();
     // если «Mark All as Read» стоит в строке с другими кнопками — встаём под всю строку
