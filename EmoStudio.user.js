@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         EmoStudio
 // @namespace    local.emostudio
-// @version      1.8
+// @author       emokids
+// @version      1.8.2
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
-// @description  EmoStudio — автолайкер DeviantArt, планировщик Студии, помощник ответов и «Бумеранг» (бейджи и подписки в ответ)
+// @description  Помощник EmoStudio
 // @match        https://www.deviantart.com/*
 // @run-at       document-start
 // @noframes
@@ -2598,7 +2599,7 @@
   let deco = { ...DECO_DEF };
   try { Object.assign(deco, JSON.parse(GM_getValue('deco', '{}')) || {}); } catch (e) { /* по умолчанию */ }
   const saveDeco = () => GM_setValue('deco', JSON.stringify(deco));
-  // своё оформление для Студии, помощника ответов и «Бумеранга»; если окна нет в списке — оно как у лайкера
+  // своё оформление для Студии, помощника ответов и окна бейджей; если окна нет в списке — оно как у лайкера
   const DECO_WIN_KEYS = ['pal', 'c1', 'c2', 'skin', 'anim'];
   let decoWin = {};
   try { decoWin = JSON.parse(GM_getValue('decoWin', '{}')) || {}; } catch (e) { decoWin = {}; }
@@ -3355,7 +3356,7 @@
             </button>
             <button class="lrow" id="bdRow" title="Ламы, тортики и подписки в ответ всем из уведомлений">
               <span class="ico amber"><svg viewBox="0 0 24 24"><rect x="4" y="9" width="16" height="11" rx="2"/><path d="M12 9v11M4 13h16M12 9c-1.5-3-5.5-4-6-1.5S9.5 9 12 9zm0 0c1.5-3 5.5-4 6-1.5S14.5 9 12 9z"/></svg></span>
-              <span class="lt"><b>Бумеранг</b><small>Ламы, тортики и подписки в ответ всем из уведомлений</small></span>${CHEV}
+              <span class="lt"><b>Бейджи и подписки</b><small>Ламы, тортики и подписки в ответ всем из уведомлений</small></span>${CHEV}
             </button>
             <button class="lrow" id="reset" title="Забыть сохранённую калибровку">
               <span class="ico red"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
@@ -3459,7 +3460,7 @@
           </div>
           <nav class="seg mini lk-win" id="lkWin" style="--n:4" role="tablist" aria-label="Какое окно оформляем">
             <i id="lkWinThumb"></i>
-            <button role="tab" data-v="liker">Лайкер</button><button role="tab" data-v="studio">Студия</button><button role="tab" data-v="ai">Помощник</button><button role="tab" data-v="bd">Бумеранг</button>
+            <button role="tab" data-v="liker">Лайкер</button><button role="tab" data-v="studio">Студия</button><button role="tab" data-v="ai">Помощник</button><button role="tab" data-v="bd">Бейджи</button>
           </nav>
           <div class="group lk-own" id="lkOwnRow" hidden>
             <div class="row inline"><div><span>Своё оформление</span><small id="lkOwnSub"></small></div>
@@ -3734,7 +3735,7 @@
     lkSym.innerHTML = SYMBOLS.map((s) => '<button class="sy" data-v="' + s.id + '" title="' + s.n + '" aria-label="' + s.n + '">' + symSvg(s) + '</button>').join('');
     lkSkin.innerHTML = SKINS.map((s) => '<button class="sk" data-v="' + s.id + '"><b>' + s.n + '</b><small>' + s.d + '</small></button>').join('');
     const THEMES = ['auto', 'light', 'dark'];
-    const WIN_N = { liker: 'лайкера', studio: 'Студии', ai: 'помощника ответов', bd: '«Бумеранга»' };
+    const WIN_N = { liker: 'лайкера', studio: 'Студии', ai: 'помощника ответов', bd: 'окна бейджей' };
     // «Все образы» / «Все цвета»: по умолчанию показываем только первые, остальное — по кнопке
     const moreTxt = { lkPre: ['Все образы (' + PRESETS.length + ')', 'Свернуть образы'], lkPal: ['Все цвета (' + (PALETTES.length + 1) + ')', 'Свернуть цвета'] };
     const lkAll = { lkPre: false, lkPal: false };
@@ -5380,7 +5381,7 @@
     // только подписка в ответ — окно профиля не показываем
     bdFrame.classList.toggle('show', !!(bd.show && bdState.running && bdBadges().length) || !!bdState.teach);
     bdFrame.classList.toggle('teach', !!bdState.teach);
-    // при калибровке профиль — слева от окна «Бумеранга», чтобы подсказка с шагами оставалась видна
+    // при калибровке профиль — слева от окна бейджей, чтобы подсказка с шагами оставалась видна
     if (bdState.teach) {
       const left = bdCard && !bdCard.hidden ? bdCard.getBoundingClientRect().left : innerWidth;
       bdFrame.style.setProperty('--ts', Math.max(0.3, Math.min(0.62, (left - 32) / 1280, (innerHeight - 40) / 900)).toFixed(3));
@@ -5745,10 +5746,10 @@
   .bd-frame.teach{left:14px;top:50%;bottom:auto;transform:translateY(-50%) scale(var(--ts,.55));transform-origin:left center;pointer-events:auto;z-index:4;border-radius:20px}`;
 
   const BD_HTML = `
-  <div class="panel ai bd" id="bdCard" data-theme="dark" hidden role="dialog" aria-label="EmoStudio — Бумеранг">
+  <div class="panel ai bd" id="bdCard" data-theme="dark" hidden role="dialog" aria-label="EmoStudio — бейджи и подписки">
     <header id="bdHead">
       <div class="brand"><span class="logo">${EYE_SVG}</span>
-        <span class="tt"><span class="title">Emo<i>Studio</i></span><span class="mode" id="bdSub" title="Ламы, тортики и подписки в ответ всем из уведомлений">Бумеранг · бейджи, подписки</span></span></div>
+        <span class="tt"><span class="title">Emo<i>Studio</i></span><span class="mode" id="bdSub" title="Ламы, тортики и подписки в ответ всем из уведомлений">Бейджи, подписки</span></span></div>
       <span class="spacer"></span>
       <button class="hbtn hmin" id="bdMin" aria-label="Свернуть" title="Свернуть в капсулу"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
       <button class="hbtn" id="bdClose" aria-label="Закрыть" title="Закрыть (Esc)"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
@@ -5973,7 +5974,7 @@
     bdStatus(endMsg ? endMsg + '. ' + sum : (byUser ? 'Остановлено. ' : 'Готово. ') + sum, endMsg || err ? 'err' : 'ok');
   }
 
-  // ---------- кнопка «Бумеранг» рядом с «Mark All as Read»: своя, в стиле EmoStudio ----------
+  // ---------- кнопка «EmoStudio» рядом с «Mark All as Read»: своя, в стиле EmoStudio ----------
   const BD_BTN_CSS = `
   :host{display:flex!important;justify-content:center;flex:none!important;width:100%;margin:10px 0 2px!important;height:auto!important;overflow:visible!important}
   button{all:unset;box-sizing:border-box;cursor:pointer;display:inline-flex;align-items:center;gap:8px;height:var(--h,30px);padding:0 15px 0 4px;border-radius:99px;
@@ -6006,7 +6007,7 @@
     bdBtnHost = document.createElement('span');
     bdBtnHost.setAttribute('data-es-bd', '1');
     const sh = bdBtnHost.attachShadow({ mode: 'open' });
-    sh.innerHTML = '<style>' + BD_BTN_CSS + '</style><button type="button" title="EmoStudio · Бумеранг: ламы, тортики и подписки в ответ всем из уведомлений"><span class="lg">' + EYE_SVG + '</span>Бумеранг</button>';
+    sh.innerHTML = '<style>' + BD_BTN_CSS + '</style><button type="button" title="EmoStudio: ламы, тортики и подписки в ответ всем из уведомлений"><span class="lg">' + EYE_SVG + '</span>EmoStudio</button>';
     // высота как у «Mark All as Read», чтобы кнопки смотрелись парой
     const mr = m.getBoundingClientRect();
     bdBtnHost.style.setProperty('--h', Math.max(28, Math.min(36, Math.round(mr.height) || 30)) + 'px');
