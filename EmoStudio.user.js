@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EmoStudio
 // @namespace    local.emostudio
-// @version      1.7.1
+// @version      1.7.2
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -5261,11 +5261,43 @@
       // значок без букв (картинка или эмодзи) с подписью «Give» / «Gift» для экранных чтецов
       || c.find((e) => !/\p{L}/u.test(bdTxt(e)) && BD_GIVE_ARIA.test((e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || ''))) || null;
   }
-  // пункт меню подарков: «Give Cake badge», «Give a Llama badge» или уже серый «Already gave a Llama»
-  function bdFindOpt(doc, b) {
+  // пункт меню подарков: «Give Cake badge», «Give a Llama badge» или уже серый «Already gave a Llama».
+  // Слово «llama» часто встречается и в комментариях на профиле («thanks for the llama you gave me!»),
+  // поэтому берём не первое совпадение на странице, а то, что похоже на пункт открытого меню рядом с 🎁.
+  const BD_MENU_SEL = '[role="menu"],[role="menuitem"],[role="listbox"],[role="option"],[role="dialog"],[data-popper-placement],[data-radix-popper-content-wrapper],[class*="menu" i],[class*="popover" i],[class*="dropdown" i]';
+  const BD_TEXT_SEL = 'article,p,blockquote,[data-hook*="comment" i],[class*="comment" i],[class*="journal" i]';
+  function bdFindOpt(doc, b, give) {
     const d = bdSel['opt:' + b.id];
-    if (d) { const e = bdByDesc(doc, d); if (e) return e; }
-    return bdTarget(bdLeaf(doc, (t) => b.word.test(t) && /\b(give|gave|send|sent|already)\b|подар|уже/i.test(t)));
+    // подсказка из «Научить кнопкам» — только если она и правда указывает на пункт с нужным бейджем
+    if (d) { const e = bdByDesc(doc, d); if (e && b.word.test(bdLab(e))) return e; }
+    const verb = /\b(give|gave|send|sent|already)\b|подар|уже/i;
+    const hits = [];
+    for (const e of doc.body.querySelectorAll('*')) {
+      if (e.children.length > 5) continue;
+      const t = (e.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!t || t.length > 48 || !b.word.test(t) || !verb.test(t) || !bdVis(e)) continue;
+      hits.push(e);
+    }
+    const leaves = hits.filter((h) => !hits.some((o) => o !== h && h.contains(o)));
+    const g = give && give.isConnected ? give.getBoundingClientRect() : null;
+    let best = null, bs = -1e9;
+    for (const h of leaves) {
+      const t = (h.textContent || '').replace(/\s+/g, ' ').trim();
+      let sc = 0;
+      // «Give Llama badge», «Give a Llama», «Already gave a Llama» — короткая фраза пункта меню
+      if (/^(give|send|gift|already\s+(gave|given|sent)|подарить|уже)\b.{0,24}$/i.test(t)) sc += 10;
+      if (h.closest(BD_MENU_SEL)) sc += 6;
+      if (h.closest(BD_TEXT_SEL)) sc -= 14;
+      if (h.closest('a[href]') && !h.closest(BD_MENU_SEL)) sc -= 4;
+      if (g) { const r = h.getBoundingClientRect(); sc -= Math.min(8, Math.hypot(r.left + r.width / 2 - (g.left + g.width / 2), r.top - g.bottom) / 120); }
+      if (sc > bs) { bs = sc; best = h; }
+    }
+    return best && bs > -6 ? bdTarget(best) : null;
+  }
+  // нажать так, как нажал бы человек: по элементу, который реально лежит сверху в центре пункта
+  function bdClickAt(el) {
+    const r = el.getBoundingClientRect(), top = el.ownerDocument.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    bdClick(top && (el.contains(top) || top.contains(el)) ? top : el);
   }
   const BD_OK_RE = /^(give|send|confirm|ok|yes|give it|give badge|подарить|отправить|да|подтвердить)$/i;
   const bdPopups = (doc) => [...doc.querySelectorAll('[role="dialog"],[aria-modal="true"]')].filter(bdVis);
@@ -5313,15 +5345,20 @@
     }
     if (!give) return { b, s: 'err', why: 'не нашёл кнопку подарка — нажмите «Научить кнопкам»' };
     bdClick(give);
-    const opt = await bdWait((d) => bdFindOpt(d, b), 6000);
+    const opt = await bdWait((d) => bdFindOpt(d, b, give), 6000);
     if (!opt) { bdEsc(); await sleep(400); return { b, s: 'err', why: 'в меню нет «' + b.n + '»' }; }
     if (isOff(opt) || BD_ALREADY_RE.test(bdTxt(opt))) { bdRemember(user, b); bdEsc(); await sleep(400); return { b, s: 'skip' }; }
-    bdClick(opt);
+    bdClickAt(opt);
     // ждём окно «Devious vibes sent!»; если DA сначала спрашивает подтверждение — жмём его
-    let confirmed = false;
+    let confirmed = false, tries = 0;
     const res = await bdWait((d) => {
       const t = bdPageText(d);
       if (BD_SENT_RE.test(t)) return 'ok';
+      // пункт меню всё ещё на месте — клик не дошёл: жмём ещё раз, потом Enter, как с клавиатуры
+      if (++tries % 6 === 0 && tries <= 12 && opt.isConnected && bdVis(opt) && !bdPopups(d).length) {
+        if (tries === 6) bdClickAt(opt);
+        else { if (opt.focus) opt.focus(); for (const ty of ['keydown', 'keyup']) opt.dispatchEvent(new d.defaultView.KeyboardEvent(ty, { key: 'Enter', code: 'Enter', bubbles: true })); }
+      }
       if (BD_POOR_RE.test(t)) return 'poor';
       if (bdPopups(d).some((p) => BD_ALREADY_RE.test(bdTxt(p)))) return 'already';
       if (!confirmed) { const ok = bdFindOk(d); if (ok) { confirmed = true; bdClick(ok); } }
