@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.8.2
+// @version      1.8.3
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -2694,7 +2694,8 @@
     --group:rgba(255,255,255,.065);--tile:rgba(255,255,255,.1);--track:rgba(120,120,128,.42);--edge:rgba(255,255,255,.15);
     --rim1:rgba(255,255,255,.32);--rim2:rgba(255,255,255,.04);--rim3:rgba(255,255,255,.13);
     --heartback:rgba(255,255,255,.09);--seg:rgba(118,118,128,.24);--segthumb:rgba(255,255,255,.17);--press:rgba(255,255,255,.07);--pop:rgba(var(--dkpop),.97)}
-  .panel.min{width:190px;border-radius:999px}
+  .panel.min{width:calc(186px + var(--cd,1) * 9px);border-radius:999px}
+  .min .chip{flex:none;white-space:nowrap}
   .panel.min[data-mode=studio]{width:152px}
   .panel.drag{transform:scale(1.03);box-shadow:0 0 0 .5px var(--edge),0 30px 70px rgba(0,0,0,.42)}
   .panel.enter{animation:enter .9s var(--spring) backwards}
@@ -4099,6 +4100,7 @@
     setNum(nLiked, stats.liked); setNum(nSkip, stats.skipped); setNum(nUnsure, stats.unsure); setNum(nFail, stats.failed);
     nFail.classList.toggle('warn', stats.failed > 0);
     chipN.textContent = stats.liked;
+    panel.style.setProperty('--cd', String(stats.liked).length);
     limTxt.textContent = cfg.limit > 0 ? 'из ' + cfg.limit : 'без лимита';
     if (stats.liked > lastLiked) { beat(); burst(); }
     lastLiked = stats.liked;
