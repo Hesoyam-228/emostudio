@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.8.3
+// @version      1.8.4
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -514,9 +514,7 @@
   };
 
   function buildWiz() {
-    const css = document.createElement('style');
-    css.textContent = scaleRadii(WIZ_CSS);
-    shadow.appendChild(css);
+    addCss(shadow, scaleRadii(WIZ_CSS));
     shadow.querySelector('#wizSlot').insertAdjacentHTML('beforeend', WIZ_HTML);
     const $ = (s) => shadow.querySelector(s);
     wizEl = $('#wiz'); wizT = $('#wizT'); wizD = $('#wizD'); wizR = $('#wizR');
@@ -2491,6 +2489,29 @@
     mono: '"JetBrains Mono","Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,monospace',
     hand: '"Segoe Print","Comic Sans MS","Bradley Hand","Marker Felt","Chalkboard SE",cursive',
   };
+  // Стили в теневом корне — сразу двумя путями: обычным <style> и «сконструированной» таблицей стилей.
+  // Сайт может посреди работы запретить встроенные <style> (политика безопасности CSP) — тогда кнопки
+  // становятся белыми и голыми. Сконструированную таблицу такой запрет не трогает, она и выручит
+  function addCss(root, css) {
+    const st = document.createElement('style');
+    st.textContent = css;
+    root.appendChild(st);
+    try {
+      if (typeof CSSStyleSheet === 'function' && 'adoptedStyleSheets' in root) {
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync(css);
+        root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet];
+      }
+    } catch (e) { /* старый браузер — хватит <style> */ }
+  }
+  // Тот же запрет выключает и атрибуты style="…" в разметке (цвета палитры, ширина вкладок, падающие буквы).
+  // Переставляем их через element.style — этот путь запрет не трогает. Следим и за тем, что появится позже
+  function guardStyles(root) {
+    const fix = (el) => { const v = el.getAttribute('style'); if (v && !el.style.length) el.style.cssText = v; };
+    const scan = (n) => { if (n.nodeType !== 1) return; if (n.hasAttribute('style')) fix(n); n.querySelectorAll('[style]').forEach(fix); };
+    root.querySelectorAll('[style]').forEach(fix);
+    try { new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach(scan))).observe(root, { childList: true, subtree: true }); } catch (e) { /* без наблюдателя */ }
+  }
   // Inter — аккуратный шрифт с кириллицей для всех окон; если сайт его не пустит, останется системный
   function loadFonts() {
     try {
@@ -3561,7 +3582,9 @@
     host.id = 'emostudio-root';
     host.style.cssText = 'all:initial;position:fixed;right:12px;bottom:12px;z-index:2147483647;';
     shadow = host.attachShadow({ mode: 'open' });
-    shadow.innerHTML = `<style>${skinAlias(scaleRadii(PANEL_CSS))}</style>${HTML}`;
+    shadow.innerHTML = HTML;
+    addCss(shadow, skinAlias(scaleRadii(PANEL_CSS)));
+    guardStyles(shadow);
     mount();
 
     const $ = (s) => shadow.querySelector(s);
@@ -4980,7 +5003,9 @@
     aiHost.id = 'emostudio-ai';
     aiHost.style.cssText = 'all:initial;position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;';
     aiSh = aiHost.attachShadow({ mode: 'open' });
-    aiSh.innerHTML = '<style>' + skinAlias(scaleRadii(PANEL_CSS)) + scaleRadii(AI_CSS) + '</style>' + AI_HTML;
+    aiSh.innerHTML = AI_HTML;
+    addCss(aiSh, skinAlias(scaleRadii(PANEL_CSS)) + scaleRadii(AI_CSS));
+    guardStyles(aiSh);
     document.documentElement.appendChild(aiHost);
     setInterval(() => { if (!aiHost.isConnected) document.documentElement.appendChild(aiHost); }, 1000);
     aiCard = aiQ('#aiCard'); aiChip = aiQ('#aiChip');
@@ -6009,7 +6034,8 @@
     bdBtnHost = document.createElement('span');
     bdBtnHost.setAttribute('data-es-bd', '1');
     const sh = bdBtnHost.attachShadow({ mode: 'open' });
-    sh.innerHTML = '<style>' + BD_BTN_CSS + '</style><button type="button" title="EmoStudio: ламы, тортики и подписки в ответ всем из уведомлений"><span class="lg">' + EYE_SVG + '</span>EmoStudio</button>';
+    sh.innerHTML = '<button type="button" title="EmoStudio: ламы, тортики и подписки в ответ всем из уведомлений"><span class="lg">' + EYE_SVG + '</span>EmoStudio</button>';
+    addCss(sh, BD_BTN_CSS);
     // высота как у «Mark All as Read», чтобы кнопки смотрелись парой
     const mr = m.getBoundingClientRect();
     bdBtnHost.style.setProperty('--h', Math.max(28, Math.min(36, Math.round(mr.height) || 30)) + 'px');
@@ -6024,9 +6050,7 @@
 
   function bdInit() {
     if (bdCard || !aiSh) return;
-    const st = document.createElement('style');
-    st.textContent = scaleRadii(BD_CSS);
-    aiSh.appendChild(st);
+    addCss(aiSh, scaleRadii(BD_CSS));
     const tpl = document.createElement('template'); // у теневого корня нет insertAdjacentHTML
     tpl.innerHTML = BD_HTML;
     aiSh.appendChild(tpl.content);
