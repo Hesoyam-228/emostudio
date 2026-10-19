@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.8.4
+// @version      1.8.5
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -833,14 +833,16 @@
     GM_setValue(RESUME_KEY, 'null');
     return r && Date.now() - r.t < 5 * 60000 ? r : null;
   }
-  const waitMinutes = () => Math.min(30, 3 * (dry + 1)); // 3, 6, 9 … 30 минут, если лайков всё нет
+  // пауза перед обновлением страницы — каждый раз разная, как у человека: от 2 до 3,5 мин.
+  // Если лайков подряд всё нет, растёт (≈2–3,5, 4–7, 6–10,5 … до 30 мин), чтобы не дёргать сайт зря
+  const waitMinutes = () => Math.min(30, (2 + Math.random() * 1.5) * (dry + 1));
   // Ждёт, обновляет страницу и после загрузки продолжает с того же места (счётчики сохраняются)
   async function reloadAndResume(why, minutes) {
     if (minutes > 0) await cooldown(minutes, why);
     if (!running) return;
     saveResume();
     status(why + '. Обновляю страницу и продолжаю…', 'run');
-    await sleep(700);
+    await sleep(600 + Math.random() * 1400);
     location.reload();
     await new Promise(() => {}); // дальше страница перезагрузится
   }
