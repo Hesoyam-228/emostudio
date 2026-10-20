@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.9.2
+// @version      1.9.3
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -4612,7 +4612,7 @@
     if (/search|поиск|password|e-?mail|url/i.test(hint)) return null;
     return f;
   }
-  const UI_LINE_RE = /^(reply|replies|cancel|submit|post|send|like|likes|hide|report|edit|delete|share|comments?|more|view \d+ more.*|\d+ (likes?|replies|badges?)|badges?|badge awards?|edited|pinned|ответить|отмена|отправить|нравится|скрыть|пожаловаться|изменить|удалить|ещё)$/i;
+  const UI_LINE_RE = /^(reply|replies|cancel|submit|post|send|like|likes|hide|report|edit|delete|share|comments?|more|view \d+ more.*|\d+ (likes?|replies|badges?)|badges?|badge awards?( \d+)?|edited|pinned|ответить|отмена|отправить|нравится|скрыть|пожаловаться|изменить|удалить|ещё)$/i;
   const AGO_RE = /^(\d+\s*(s|m|h|d|w|mo|y|sec|min|mins|hour|hours|day|days|week|weeks|month|months|year|years)\.?\s*ago|just now|yesterday|сейчас|вчера|\d+\s*(сек|мин|час|дн|нед|мес|год|лет)\S*\s*назад)$/i;
   function authorIn(a) {
     if (!a || !a.querySelectorAll) return '';
@@ -5423,14 +5423,21 @@
     });
     return out;
   }
-  // сердечко комментария: серое — лайка нет; цветное (у DA — зелёное) или «Unlike» — уже стоит; при наведении цвету не верим
+  // сердечко комментария: у DA при лайке не меняются ни цвет, ни подпись («Like this comment») — меняется только
+  // рисунок иконки (контурное → залитое). Его и смотрим; если DA сменит иконки, скрипт запомнит новые по первому лайку
+  const CM_LIKE_OFF = 'M14.504 2.84', CM_LIKE_ON = 'M11.584 1.136';
+  let cmLikePaths = null;
+  try { cmLikePaths = JSON.parse(GM_getValue('cmLikePaths', 'null')); } catch (e) { cmLikePaths = null; }
+  const cmPath = (btn) => { const pth = btn.querySelector('path'); return pth ? (pth.getAttribute('d') || '').slice(0, 14) : ''; };
   function cmLikeState(btn) {
     const lab = (btn.getAttribute('aria-label') || '') + ' ' + (btn.title || '');
     if (/unlike|liked/i.test(lab) || btn.getAttribute('aria-pressed') === 'true') return 'liked';
-    if (btn.matches(':hover')) return '';
-    const c = (getComputedStyle(btn).color.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
-    if (c.length < 3) return '';
-    return Math.max(...c) - Math.min(...c) < 28 ? 'none' : 'liked';
+    const d = cmPath(btn);
+    if (d.startsWith(CM_LIKE_ON)) return 'liked';
+    if (d.startsWith(CM_LIKE_OFF)) return 'none';
+    if (cmLikePaths && d === cmLikePaths.on) return 'liked';
+    if (cmLikePaths && d === cmLikePaths.off) return 'none';
+    return ''; // незнакомая иконка — не трогаем, чтобы случайно не снять лайк
   }
   const cmLikeBtn = (id) => document.querySelector('[data-commentid="' + id + '"] button[aria-label*="ike this comment" i]');
   function cmSig(btn) {
@@ -5493,7 +5500,9 @@
   // ---- лайкнуть все ----
   async function cmLikeAll() {
     await cmLoadAll();
-    const todo = cmRows().filter((r) => !r.mine && r.like && cmLikeState(r.like) === 'none');
+    const rowsL = cmRows().filter((r) => !r.mine && r.like);
+    if (rowsL.length && !rowsL.some((r) => cmLikeState(r.like))) { aiStatus('Не узнаю сердечки DA — не стал лайкать, чтобы не снять чужие лайки. Напишите автору', 'err'); return; }
+    const todo = rowsL.filter((r) => cmLikeState(r.like) === 'none');
     if (!todo.length) { aiStatus('На всех чужих комментариях уже стоит ваш лайк', 'ok'); return; }
     let ok = 0, unk = 0, amb = 0;
     for (let i = 0; i < todo.length && !cmStop; i++) {
@@ -5501,7 +5510,7 @@
       if (!btn.isConnected || cmLikeState(btn) !== 'none') continue;
       cmProg(i / todo.length); aiStatus('Лайкаю ' + (i + 1) + ' из ' + todo.length + ' — @' + r.user, 'run');
       r.el.scrollIntoView({ block: 'center' }); await sleep(250 + Math.random() * 350);
-      const before = cmSig(btn), mark = net.seq;
+      const before = cmSig(btn), d0 = cmPath(btn), mark = net.seq;
       btn.click();
       let res = '';
       for (let t = 0; t < 16 && !res; t++) {
@@ -5509,7 +5518,11 @@
         if (net.events.some((x) => x.id > mark && x.done && (x.status === 429 || (x.status >= 400 && LIMIT_RE.test(x.resp || ''))))) res = 'limit';
         const cur = cmLikeBtn(r.id) || btn;
         if (!res && cmLikeState(cur) === 'liked') res = 'ok';
-        else if (!res && t > 6 && cmSig(cur) !== before) res = 'amb';
+        else if (!res && t > 6 && cmSig(cur) !== before) {
+          // иконка сменилась, но она нам незнакома — запоминаем пару «до/после» как «нет лайка / есть лайк»
+          const d1 = cmPath(cur);
+          if (d0 && d1 && d0 !== d1 && !cmLikePaths) { cmLikePaths = { off: d0, on: d1 }; GM_setValue('cmLikePaths', JSON.stringify(cmLikePaths)); res = 'ok'; } else res = 'amb';
+        }
       }
       if (res === 'limit') { aiStatus('DA просит не так часто — остановился. Лайкнул: ' + ok + '. Попробуйте минут через 10', 'err'); return; }
       if (res === 'ok') { ok++; unk = 0; amb = 0; }
@@ -6427,6 +6440,8 @@
     }
     return 'give';
   }
+  // открыто ли меню подарков (в нём есть «Points», «Llama», «Cake» или «Core»)
+  const bdGiftMenuOpen = (d) => [...d.querySelectorAll('[role="menu"]')].some((m) => bdVis(m) && /points|llama|cake|core/i.test(m.innerText || ''));
   // закрыть меню подарков, если оно осталось открытым (все выбранные бейджи этому человеку уже подарены)
   async function bdCloseMenu(b, give) {
     const d = bdDoc();
@@ -6507,7 +6522,13 @@
     ctx.give = give;
     // меню уже открыто (прошлый бейдж оказался подарен раньше) — второй клик по 🎁 его бы закрыл
     let opt = ctx.menu ? bdFindOpt(bdDoc(), b, give) : null;
-    if (!opt) { bdClick(give); opt = await bdWait((d) => bdFindOpt(d, b, give), 6000); }
+    // профиль только что загрузился: первое нажатие на 🎁 DA может пропустить, пока страница «просыпается».
+    // Меню не открылось — жмём ещё раз (но не когда оно уже открыто: второй клик его бы закрыл)
+    for (let k = 0; k < 3 && !opt && bdState.running; k++) {
+      const d0 = bdDoc();
+      if (!(d0 && bdGiftMenuOpen(d0))) { give = (d0 && bdFindGive(d0)) || give; bdClick(give); }
+      opt = await bdWait((d) => bdFindOpt(d, b, give), k < 2 ? 3000 : 5000);
+    }
     if (!opt) { ctx.menu = false; bdEsc(); await sleep(400); return { b, s: 'err', why: 'в меню нет «' + b.n + '» — пройдите «Калибровку»' }; }
     // меню ещё «выезжает» и перерисовывается — клик в этот момент DA пропускает
     opt = (await bdStableOpt(b, give, opt)) || opt;
@@ -6580,6 +6601,7 @@
     if (!todo.length && !needWatch) return out;
     const loaded = await bdOpenUrl(location.origin + '/' + encodeURIComponent(user));
     if (!loaded || !bdDoc()) return out.concat([{ s: 'err', why: 'профиль не открылся' }]);
+    await sleep(1200 + Math.random() * 800); // даём профилю «проснуться», иначе первое нажатие DA пропускает
     const ctx = { menu: false, give: null };
     for (const b of todo) {
       if (!bdState.running) break;
