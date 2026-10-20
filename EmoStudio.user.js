@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10.1
+// @version      1.10.2
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -4523,8 +4523,11 @@
   // перегружен (500/503), лимит (429), нет модели (404/400), молчит (0) — пробуем следующую модель
   const AI_RETRY = (st) => st === 400 || st === 404 || st === 429 || st >= 500 || st === 0;
   // «размышления» перед ответом у моделей Flash отнимают по 10–30 с — для коротких ответов они не нужны
-  const aiNoThink = new Set(); // модели, которые не приняли настройку «без размышлений»
-  const aiThink = (model) => (aiNoThink.has(model) || /lite/.test(model) ? {} : /gemini-2\./.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : { thinkingConfig: { thinkingLevel: 'low' } });
+  // Gemini 3 (и Flash-Lite тоже) по умолчанию «думают» долго: просим минимум, а если модель так не умеет — «низко», потом без настройки
+  const AI_THINK = [{ thinkingConfig: { thinkingLevel: 'minimal' } }, { thinkingConfig: { thinkingLevel: 'low' } }, {}];
+  const aiThinkLvl = new Map(); // модель → какую из настроек она принимает
+  const aiNoThink = { has: (m) => (aiThinkLvl.get(m) || 0) >= AI_THINK.length - 1, add: (m) => aiThinkLvl.set(m, Math.min(AI_THINK.length - 1, (aiThinkLvl.get(m) || 0) + 1)) };
+  const aiThink = (model) => (/gemini-2\./.test(model) ? (aiNoThink.has(model) ? {} : { thinkingConfig: { thinkingBudget: 0 } }) : AI_THINK[aiThinkLvl.get(model) || 0]);
   // один запрос к модели: { list } — готово; { err, retry } — не вышло (retry — есть смысл спросить другую модель)
   async function aiGemOnce(model, timeout) {
     let r;
@@ -4545,7 +4548,7 @@
     }
     const raw = JSON.stringify(r.j || '');
     // модель не знает настройку «без размышлений» — повторим её же без этой настройки
-    if (r.status === 400 && /think/i.test(raw) && !aiNoThink.has(model)) { aiNoThink.add(model); return aiGemOnce(model, timeout); }
+    if (r.status === 400 && /think/i.test(raw) && !aiNoThink.has(model)) { aiNoThink.add(model); return aiGemOnce(model, timeout); } // попробуем настройку попроще
     const key = r.status === 401 || r.status === 403 || (r.status === 400 && /api key|api_key/i.test(raw));
     return { err: new Error(aiErr(r.status, r.j)), retry: !key && AI_RETRY(r.status), fatal: key };
   }
@@ -4559,8 +4562,8 @@
         last = r;
         if (--pending <= 0) { done = true; resolve(last); }
       };
-      aiGemOnce(model, 25000).then(fin);
-      if (model !== AI_FAST) setTimeout(() => { if (!done) { pending++; aiGemOnce(AI_FAST, 20000).then(fin); } }, 6000);
+      aiGemOnce(model, 40000).then(fin);
+      if (model !== AI_FAST) setTimeout(() => { if (!done) { pending++; aiGemOnce(AI_FAST, 40000).then(fin); } }, 5000);
     });
   }
   async function aiGemini() {
@@ -5435,7 +5438,7 @@
     return false;
   }
   // ---------- подсказки сразу при ответе: нажали «Reply» — под полем три варианта, нажатие вставляет ----------
-  let aiSugF = null, aiSugKey = '', aiSugList = [], aiSugSeq = 0, aiSugIv = 0, aiSugBlock = false;
+  let aiSugF = null, aiSugKey = '', aiSugList = [], aiSugSeq = 0, aiSugIv = 0, aiSugBlock = false, aiSugBusy = false;
   const aiSugOff = new WeakSet(); // поля, где подсказки закрыли крестиком
   // нижний край редактора вместе с его кнопками (Cancel / Comment) — подсказки встают под ними, а не поверх
   function aiEditorBottom(f) {
@@ -5464,7 +5467,7 @@
   function aiSugHide() {
     const box = aiQ('#aiSug');
     if (box && !box.hidden) cardHide(box);
-    clearInterval(aiSugIv); aiSugIv = 0; aiSugSeq++;
+    clearInterval(aiSugIv); aiSugIv = 0; aiSugSeq++; aiSugBusy = false;
   }
   function aiSugRender(list, err) {
     const box = aiQ('#aiSugList');
@@ -5495,6 +5498,7 @@
     if (!aiSugIv) aiSugIv = setInterval(aiSugPos, 250);
     aiSugPos();
     if (!force && key === aiSugKey && aiSugList.length) { aiSugRender(aiSugList); return; }
+    if (!force && key === aiSugKey && aiSugBusy) return; // эти варианты уже пишутся — второй запрос не нужен
     aiSugKey = key;
     aiNow.ctx = c.text; aiNow.name = c.author; aiNow.title = artTitle();
     if (c.text && THANKS_RE.test(c.text)) { aiNow.mode = 'rethanks'; aiNow.why = whyFromText(c.text); } else aiNow.mode = 'reply';
@@ -5502,11 +5506,19 @@
     aiQ('#aiSugList').innerHTML = '<div class="sg-sk"></div><div class="sg-sk"></div><div class="sg-sk"></div>';
     aiQ('#aiSugMore').classList.add('busy');
     requestAnimationFrame(aiSugPos);
+    // секундомер в шапке: видно, что ИИ пишет, а не что всё зависло
+    const head = aiQ('#aiSug .sg-h b'), t0 = Date.now();
+    const tick = setInterval(() => { if (seq === aiSugSeq && aiKey()) head.textContent = 'ИИ пишет… ' + Math.round((Date.now() - t0) / 1000) + ' с'; }, 1000);
+    aiSugBusy = true;
     let list, err = '';
     try { list = await aiFetch(); } catch (e) { list = aiOffline(); err = (e && e.message) || 'ИИ недоступен'; }
+    clearInterval(tick);
+    if (seq === aiSugSeq) aiSugBusy = false;
+    head.textContent = 'Как ответить';
     if (seq !== aiSugSeq) return;
     aiQ('#aiSugMore').classList.remove('busy');
-    aiSugList = list; aiList = list; aiRemember(list);
+    // неудачу не запоминаем — в следующий раз снова спросим ИИ
+    aiSugList = err ? [] : list; aiList = list; aiRemember(list);
     aiSugRender(list, err);
   }
   function aiAttach(f) {
