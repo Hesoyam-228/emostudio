@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10
+// @version      1.10.1
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -4499,48 +4499,83 @@
     if (status >= 500) return n + ' сейчас перегружен (все модели заняты) — подождите минуту';
     return 'Ошибка ' + n + ' ' + status + (m ? ': ' + String(m).slice(0, 120) : '');
   }
-  function aiPost(url, headers, body) {
+  function aiPost(url, headers, body, timeout) {
     return new Promise((resolve, reject) => {
       if (typeof GM_xmlhttpRequest !== 'function') return reject(new Error('Переустановите скрипт: нужен доступ GM_xmlhttpRequest'));
       GM_xmlhttpRequest({
-        method: 'POST', url, data: JSON.stringify(body), timeout: 90000, headers: { 'content-type': 'application/json', ...headers },
+        method: 'POST', url, data: JSON.stringify(body), timeout: timeout || 90000, headers: { 'content-type': 'application/json', ...headers },
         onload: (r) => { let j = null; try { j = JSON.parse(r.responseText); } catch (e) { j = null; } resolve({ status: r.status, j }); },
         onerror: () => reject(new Error('Нет связи с ' + aiProv().n)),
         ontimeout: () => reject(new Error(aiProv().n + ' долго не отвечает — попробуйте ещё раз')),
       });
     });
   }
-  // Gemini: если выбранная модель недоступна (нет в бесплатном лимите или переименована) — пробуем следующую
-  // модель, которая только что выручила, — первой следующие 10 минут (выбранная могла быть перегружена)
+  // Gemini: если выбранная модель недоступна (нет в бесплатном лимите, перегружена, молчит) — пробуем следующую.
+  // Модель, которая выручила, запоминается на сутки и спрашивается первой — так ответ приходит сразу
+  const AI_FAST = 'gemini-3.5-flash-lite';
   let aiPrefer = { model: '', until: 0 };
-  // перегружен (500/503), лимит (429), нет модели (404/400) — пробуем следующую модель; обошли все — ждём и пробуем ещё раз
+  try { aiPrefer = JSON.parse(GM_getValue('aiPrefer', 'null')) || aiPrefer; } catch (e) { /* по умолчанию */ }
+  const aiSetPrefer = (model, chosen) => {
+    aiPrefer = model && model !== chosen ? { model, until: Date.now() + 86400000 } : { model: '', until: 0 };
+    GM_setValue('aiPrefer', JSON.stringify(aiPrefer));
+  };
+  const aiPreferNow = () => (aiPrefer.until > Date.now() && AI_PROVIDERS.gemini.models.some((m) => m.id === aiPrefer.model) ? aiPrefer.model : '');
+  // перегружен (500/503), лимит (429), нет модели (404/400), молчит (0) — пробуем следующую модель
   const AI_RETRY = (st) => st === 400 || st === 404 || st === 429 || st >= 500 || st === 0;
+  // «размышления» перед ответом у моделей Flash отнимают по 10–30 с — для коротких ответов они не нужны
+  const aiNoThink = new Set(); // модели, которые не приняли настройку «без размышлений»
+  const aiThink = (model) => (aiNoThink.has(model) || /lite/.test(model) ? {} : /gemini-2\./.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : { thinkingConfig: { thinkingLevel: 'low' } });
+  // один запрос к модели: { list } — готово; { err, retry } — не вышло (retry — есть смысл спросить другую модель)
+  async function aiGemOnce(model, timeout) {
+    let r;
+    try {
+      r = await aiPost('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', { 'x-goog-api-key': ai.keys.gemini }, {
+        systemInstruction: { parts: [{ text: AI_SYSTEM }] },
+        contents: [{ role: 'user', parts: [{ text: aiPrompt() }] }],
+        generationConfig: { temperature: 1.1, responseMimeType: 'application/json', ...aiThink(model) },
+      }, timeout);
+    } catch (e) { return { err: new Error('Gemini ' + model.replace('gemini-', '') + ' не ответил за ' + Math.round(timeout / 1000) + ' с'), retry: true }; }
+    if (r.status >= 200 && r.status < 300 && r.j) {
+      const cand = (r.j.candidates || [])[0];
+      const txt = cand && cand.content ? (cand.content.parts || []).filter((x) => !x.thought).map((x) => x.text || '').join('\n') : '';
+      const list = aiParse(txt);
+      if (list.length) return { list: aiTop(list), model };
+      const safety = cand && cand.finishReason === 'SAFETY';
+      return { err: new Error(safety ? 'Gemini отказался писать этот текст — попробуйте другой режим' : 'Gemini вернул пустой ответ — попробуйте ещё раз'), retry: !safety, fatal: safety };
+    }
+    const raw = JSON.stringify(r.j || '');
+    // модель не знает настройку «без размышлений» — повторим её же без этой настройки
+    if (r.status === 400 && /think/i.test(raw) && !aiNoThink.has(model)) { aiNoThink.add(model); return aiGemOnce(model, timeout); }
+    const key = r.status === 401 || r.status === 403 || (r.status === 400 && /api key|api_key/i.test(raw));
+    return { err: new Error(aiErr(r.status, r.j)), retry: !key && AI_RETRY(r.status), fatal: key };
+  }
+  // ждём модель; если молчит дольше 6 с — параллельно спрашиваем быструю Flash-Lite и берём того, кто ответит первым
+  function aiGemRace(model) {
+    return new Promise((resolve) => {
+      let done = false, pending = 1, last = null;
+      const fin = (r) => {
+        if (done) return;
+        if (r.list || r.fatal) { done = true; resolve(r); return; }
+        last = r;
+        if (--pending <= 0) { done = true; resolve(last); }
+      };
+      aiGemOnce(model, 25000).then(fin);
+      if (model !== AI_FAST) setTimeout(() => { if (!done) { pending++; aiGemOnce(AI_FAST, 20000).then(fin); } }, 6000);
+    });
+  }
   async function aiGemini() {
     const ms = AI_PROVIDERS.gemini.models.map((m) => m.id), chosen = ai.models.gemini;
-    const first = aiPrefer.until > Date.now() && ms.includes(aiPrefer.model) ? aiPrefer.model : chosen;
+    const first = aiPreferNow() || chosen;
     const order = [first, ...ms.filter((m) => m !== first)];
     let lastErr = null;
     for (let pass = 0; pass < 2; pass++) {
-    if (pass) await sleep(1500 + Math.random() * 1500);
-    for (const model of order) {
-      const r = await aiPost('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', { 'x-goog-api-key': ai.keys.gemini }, {
-        systemInstruction: { parts: [{ text: AI_SYSTEM }] },
-        contents: [{ role: 'user', parts: [{ text: aiPrompt() }] }],
-        generationConfig: { temperature: 1.1, responseMimeType: 'application/json' },
-      });
-      if (r.status >= 200 && r.status < 300 && r.j) {
-        const cand = (r.j.candidates || [])[0];
-        const txt = cand && cand.content ? (cand.content.parts || []).filter((x) => !x.thought).map((x) => x.text || '').join('\n') : '';
-        const list = aiParse(txt);
-        if (list.length) { aiPrefer = model !== chosen ? { model, until: Date.now() + 600000 } : { model: '', until: 0 }; return aiTop(list); }
-        lastErr = new Error(cand && cand.finishReason === 'SAFETY' ? 'Gemini отказался писать этот текст — попробуйте другой режим' : 'Gemini вернул пустой ответ — попробуйте ещё раз');
-        if (cand && cand.finishReason === 'SAFETY') throw lastErr;
-        continue;
+      if (pass) await sleep(1200 + Math.random() * 1200);
+      for (const model of order) {
+        const r = await aiGemRace(model);
+        if (r.list) { aiSetPrefer(r.model, chosen); return r.list; }
+        lastErr = r.err;
+        if (r.fatal || !r.retry) throw lastErr;
       }
-      lastErr = new Error(aiErr(r.status, r.j));
-      if (r.status === 401 || r.status === 403 || (r.status === 400 && /api key|api_key/i.test(JSON.stringify(r.j || '')))) throw lastErr; // ключ неверный — другие модели не помогут
-      if (!AI_RETRY(r.status)) throw lastErr;
-    }
     }
     throw lastErr || new Error('Gemini недоступен');
   }
@@ -4556,11 +4591,15 @@
         const ms = AI_PROVIDERS.gemini.models.map((m) => m.id), first = ai.models.gemini;
         let last = null;
         for (const model of [first, ...ms.filter((m) => m !== first)]) {
-          const r = await aiPost('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', { 'x-goog-api-key': k },
-            { contents: [{ role: 'user', parts: [{ text: 'Reply with the single word: ok' }] }], generationConfig: { maxOutputTokens: 20 } });
-          if (r.status >= 200 && r.status < 300) { if (model !== first) { ai.models.gemini = model; aiSave(); } res = { ok: true, msg: 'Ключ работает ✓ — тексты пишет Gemini (' + (AI_PROVIDERS.gemini.models.find((m) => m.id === model) || {}).n + ')' }; break; }
+          let r;
+          try {
+            r = await aiPost('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', { 'x-goog-api-key': k },
+              { contents: [{ role: 'user', parts: [{ text: 'Reply with the single word: ok' }] }], generationConfig: { maxOutputTokens: 20, ...aiThink(model) } }, 20000);
+          } catch (e) { r = { status: 0, j: null }; } // молчит — пробуем следующую модель
+          if (r.status === 400 && /think/i.test(JSON.stringify(r.j || '')) && !aiNoThink.has(model)) { aiNoThink.add(model); r = { status: 503, j: r.j }; }
+          if (r.status >= 200 && r.status < 300) { if (model !== first) { ai.models.gemini = model; aiSave(); } aiSetPrefer('', ''); res = { ok: true, msg: 'Ключ работает ✓ — тексты пишет Gemini (' + (AI_PROVIDERS.gemini.models.find((m) => m.id === model) || {}).n + ')' }; break; }
           last = r;
-          if (!(r.status === 404 || r.status === 429 || r.status >= 500)) break;
+          if (!(r.status === 404 || r.status === 429 || r.status >= 500 || r.status === 0)) break;
         }
         if (!res) res = last && last.status === 429 ? { ok: true, msg: 'Ключ принят, но бесплатный лимит на эту минуту исчерпан — подождите минуту' }
           : { ok: false, msg: aiErr(last ? last.status : 0, last && last.j) };
@@ -5195,7 +5234,11 @@
     cardTheme(aiSh.getElementById('bdCard'), db);
     if (typeof bdFrame !== 'undefined' && bdFrame) cardTheme(bdFrame, db, true);
   }
-  const aiModelName = () => { const P = aiProv(); return P.n + ' ' + ((P.models.find((m) => m.id === ai.models[ai.provider]) || P.models[0]).n.replace(P.n + ' ', '')); };
+  // в подзаголовке — модель, которая реально отвечает (если выбранная не отвечала, скрипт перешёл на другую)
+  const aiModelName = () => {
+    const P = aiProv(), id = (ai.provider === 'gemini' && aiPreferNow()) || ai.models[ai.provider];
+    return P.n + ' ' + ((P.models.find((m) => m.id === id) || P.models[0]).n.replace(P.n + ' ', ''));
+  };
   // статус окна: точка-индикатор и текст в плашке; новая запись мягко «въезжает»
   function cardStatus(box, t, k) {
     if (!box) return;
@@ -5944,12 +5987,12 @@
     const sh = cmPillHost.attachShadow({ mode: 'open' });
     sh.innerHTML = '<button type="button" title="EmoStudio: лайки, бесплатные бейджи и ответы всем комментариям"><span class="lg">' + EYE_SVG + '</span>EmoStudio</button>';
     addCss(sh, BD_BTN_CSS);
-    addCss(sh, ':host{display:inline-flex!important;width:auto!important;margin:0 0 0 12px!important;align-items:center;vertical-align:middle}');
+    addCss(sh, ':host{display:inline-flex!important;width:auto!important;margin:0 0 0 12px!important;align-items:center;vertical-align:middle;position:relative;top:-2px}');
     cmPillHost.style.setProperty('--h', '26px');
     const d = decoFor('ai'), v = decoVars(palOf(d.pal, d));
     for (const k in v) cmPillHost.style.setProperty(k, v[k]);
     sh.querySelector('button').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); aiOpen('bulk', cmPillHost); });
-    h.after(cmPillHost);
+    h.appendChild(cmPillHost); // внутрь заголовка — в одну строку с «Profile Comments 1.1K»
   }
 
   function aiInit() {
