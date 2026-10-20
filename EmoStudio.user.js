@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10.5
+// @version      1.10.6
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -1021,6 +1021,7 @@
     rinoTimes: RINO_DEF.slice(),   // вкладка RinoAkuma: время по порядку — 1-я картинка, 2-я, 3-я…
     rinoStart: 0,                  // вкладка RinoAkuma: с какого номера списка начинать (нажали на время в сетке)
     rinoFor: '',                   // вкладка RinoAkuma: для какого дня выбран этот номер (другой день — снова с первого свободного)
+    rinoBase: null,                // вкладка RinoAkuma, «Начать сначала»: { day, h: {номер часа: сколько картинок уже стояло} } — их не считаем
   });
   let sch = schDefaults();
   try { const o = JSON.parse(GM_getValue('sch', 'null')); if (o && typeof o === 'object') sch = Object.assign(sch, o); } catch (e) { /* значения по умолчанию */ }
@@ -1038,6 +1039,7 @@
   if (!Array.isArray(sch.rinoTimes) || !sch.rinoTimes.length || sch.rinoTimes.some((t) => !/^\d{2}:00$/.test(t))) sch.rinoTimes = RINO_DEF.slice();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sch.rinoDate || '')) sch.rinoDate = '';
   sch.rinoStart = Math.min(Math.max(0, sch.rinoStart | 0), sch.rinoTimes.length - 1);
+  if (!sch.rinoBase || typeof sch.rinoBase !== 'object' || !sch.rinoBase.day || typeof sch.rinoBase.h !== 'object') sch.rinoBase = null;
   if (!['slots', 'interval', 'rino'].includes(sch.mode)) sch.mode = 'interval';
   ['start', 'startTime', 'stagger', 'fieldTz', 'hv', 'rinoNext'].forEach((k) => { delete sch[k]; });
   const schSave = () => GM_setValue('sch', JSON.stringify(sch));
@@ -1114,8 +1116,18 @@
   // видно на странице или поставил скрипт (taken: номер часа → сколько картинок). Повторы в списке (два раза 12AM)
   // занимаются по очереди. Прошедшее (past) DA не примет — пропускаем. До выбранного номера — skip
   function rinoSlots(s, taken) {
-    const d = rinoDay(s), lim = Date.now() + SCH_LEAD, left = new Map(taken || []);
-    const start = s.rinoFor === rinoKey(s) ? s.rinoStart | 0 : 0;
+    const d = rinoDay(s), key = rinoKey(s), lim = Date.now() + SCH_LEAD, left = new Map(taken || []);
+    const start = s.rinoFor === key ? s.rinoStart | 0 : 0;
+    // «Начать сначала»: картинки, что уже стояли на этот день в момент нажатия, не считаем — новые встанут на те же часы
+    const base = s.rinoBase && s.rinoBase.day === key ? s.rinoBase.h : null;
+    let ignored = 0;
+    if (base) {
+      [...left.keys()].forEach((k) => {
+        const c = left.get(k), b = Math.min(c, base[k] | 0);
+        ignored += b;
+        if (c - b > 0) left.set(k, c - b); else left.delete(k);
+      });
+    }
     const slots = (s.rinoTimes || []).map((t, i) => {
       const ms = toUtc(d[0], d[1], d[2], +t.slice(0, 2), 0, s.tz), k = hk(ms), c = left.get(k) || 0;
       if (c > 0) { left.set(k, c - 1); return { ms, st: 'ok' }; }
@@ -1123,7 +1135,7 @@
     });
     const free = [];
     slots.forEach((x, i) => { if (x.st === 'free') free.push(i); });
-    return { d, slots, free, start, done: slots.filter((x) => x.st === 'ok').length, past: slots.filter((x) => x.st === 'past') };
+    return { d, slots, free, start, done: slots.filter((x) => x.st === 'ok').length, past: slots.filter((x) => x.st === 'past'), fresh: !!base, ignored };
   }
   function buildPlan(n, s, taken, offset) {
     const tz = s.tz, out = [], warns = [];
@@ -2395,9 +2407,14 @@
       });
       const f = r.free.length;
       $('#sRinoN').textContent = (f ? 'начну с №' + (nx + 1) + ' (' + rinoFmt(sch.rinoTimes[nx]) + ') · свободно ' + f : 'свободных времён нет')
-        + (r.done ? ' · уже стоит ' + r.done : '') + ' · ' + dayStr(d);
+        + (r.done ? ' · уже стоит ' + r.done : '') + (r.ignored ? ' · заново: ' + r.ignored + ' прежних не считаю' : '') + ' · ' + dayStr(d);
+      // «Начать сначала»: с №1, даже если на эти часы уже стоят картинки; нажали ещё раз — снова их учитываем
       const rs = $('#sRinoRestart');
-      rs.hidden = !r.start; rs.querySelector('small').textContent = 'сейчас начинаю с №' + (r.start + 1) + ' — вернуть первое свободное время';
+      rs.hidden = !(r.done || r.start || r.fresh);
+      rs.querySelector('b').textContent = r.fresh ? 'Учитывать уже стоящие' : 'Начать сначала';
+      rs.querySelector('small').textContent = r.fresh
+        ? 'снова пропускать времена, на которых уже стоят картинки' + (r.ignored ? ' (' + r.ignored + ')' : '')
+        : 'с №1 (' + rinoFmt(sch.rinoTimes[0]) + '), даже если время уже занято — стоящие картинки не трогаю';
       if (shadow.activeElement !== rnText) rnText.value = rinoText(sch.rinoTimes);
     }
     schState.rinoMark = (i, st) => { if (st) rnMarks[i] = st; else delete rnMarks[i]; if (sch.mode === 'rino') drawRino(); };
@@ -2451,11 +2468,23 @@
       sch.rinoTimes = RINO_DEF.slice(); schSave(); rnText.value = rinoText(sch.rinoTimes); drawRino(); render();
       rnMsg.className = 'rn-msg ok'; rnMsg.textContent = 'Вернул стандартные 30 времён';
     };
+    // что уже стоит на выбранный день: номер часа → сколько картинок (запоминаем при «Начать сначала»)
+    const rinoSnap = () => {
+      const t = rnTaken(), d = rinoDay(sch), h = {};
+      for (let x = 0; x < 24; x++) { const k = hk(toUtc(d[0], d[1], d[2], x, 0, sch.tz)); if (t.get(k)) h[k] = t.get(k); }
+      return h;
+    };
     $('#sRinoRestart').onclick = () => {
       if (schRunning) return status('Сначала остановите планировщик', 'err');
-      sch.rinoStart = 0; schSave(); drawRino(); render();
-      const nx = rinoSlots(sch, rnTaken()).free[0];
-      status(nx == null ? 'Свободных времён на эту дату нет' : 'Начну с первого свободного: №' + (nx + 1) + ' — ' + rinoFmt(sch.rinoTimes[nx]), nx == null ? 'err' : 'ok');
+      const key = rinoKey(sch), fresh = !!(sch.rinoBase && sch.rinoBase.day === key);
+      sch.rinoStart = 0; sch.rinoFor = key;
+      if (fresh) sch.rinoBase = null;
+      else { const h = rinoSnap(); sch.rinoBase = Object.keys(h).length ? { day: key, h } : null; }
+      schSave(); drawRino(); render();
+      const r = rinoSlots(sch, rnTaken()), nx = r.free[0];
+      if (nx == null) return status('Свободных времён на эту дату нет', 'err');
+      status(fresh ? 'Снова пропускаю занятые времена: начну с №' + (nx + 1) + ' — ' + rinoFmt(sch.rinoTimes[nx])
+        : 'Начну сначала: №' + (nx + 1) + ' — ' + rinoFmt(sch.rinoTimes[nx]) + (r.ignored ? '. Уже стоящие картинки (' + r.ignored + ') не трогаю — новые встанут на те же часы' : ''), 'ok');
     };
     modeBtns.forEach((b) => { b.onclick = () => { sch.mode = b.dataset.m; schSave(); paintMode(); render(); }; });
 
@@ -3673,7 +3702,7 @@
               </div>
               <button class="lrow" id="sRinoRestart" hidden>
                 <span class="ico amber"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
-                <span class="lt"><b>С первого свободного</b><small></small></span>
+                <span class="lt"><b>Начать сначала</b><small></small></span>
               </button>
               <button class="lrow" id="sRinoEdit" aria-expanded="false">
                 <span class="ico violet"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></span>
