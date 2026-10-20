@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10.2
+// @version      1.10.3
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -4519,7 +4519,51 @@
     aiPrefer = model && model !== chosen ? { model, until: Date.now() + 86400000 } : { model: '', until: 0 };
     GM_setValue('aiPrefer', JSON.stringify(aiPrefer));
   };
-  const aiPreferNow = () => (aiPrefer.until > Date.now() && AI_PROVIDERS.gemini.models.some((m) => m.id === aiPrefer.model) ? aiPrefer.model : '');
+  const aiPreferNow = () => (aiPrefer.until > Date.now() && /^gemini-/.test(aiPrefer.model || '') ? aiPrefer.model : '');
+  // какие модели реально есть у этого ключа (Google их часто меняет и переименовывает) — спрашиваем раз в сутки
+  let aiAvail = null;
+  try { const o = JSON.parse(GM_getValue('aiAvail', 'null')); if (o && Date.now() - o.t < 86400000 && Array.isArray(o.list) && o.list.length) aiAvail = o.list; } catch (e) { aiAvail = null; }
+  function aiGet(url, headers, timeout) {
+    return new Promise((resolve, reject) => {
+      if (typeof GM_xmlhttpRequest !== 'function') return reject(new Error('нет GM_xmlhttpRequest'));
+      GM_xmlhttpRequest({
+        method: 'GET', url, timeout: timeout || 15000, headers: headers || {},
+        onload: (r) => { let j = null; try { j = JSON.parse(r.responseText); } catch (e) { j = null; } resolve({ status: r.status, j }); },
+        onerror: () => reject(new Error('нет связи')), ontimeout: () => reject(new Error('долго')),
+      });
+    });
+  }
+  async function aiLoadModels() {
+    if (aiAvail || !ai.keys.gemini) return aiAvail;
+    try {
+      const r = await aiGet('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { 'x-goog-api-key': ai.keys.gemini }, 15000);
+      const list = ((r.j && r.j.models) || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+        .map((m) => String(m.name || '').replace(/^models\//, ''))
+        .filter((id) => /^gemini-[\d.]+-flash/.test(id) && !/image|tts|audio|live|embed|vision|thinking|exp\b|robotics|computer|native/i.test(id));
+      if (list.length) { aiAvail = list; GM_setValue('aiAvail', JSON.stringify({ t: Date.now(), list })); }
+      console.info('[EmoStudio] модели Gemini для этого ключа:', list.join(', ') || '(список пустой, ответ ' + r.status + ')');
+    } catch (e) { console.info('[EmoStudio] не получил список моделей Gemini:', e && e.message); }
+    return aiAvail;
+  }
+  // самые быстрые из доступных: сначала Flash-Lite посвежее, потом обычный Flash
+  const aiVer = (id) => { const m = /gemini-(\d+(?:\.\d+)?)/.exec(id); return m ? parseFloat(m[1]) : 0; };
+  const aiFastList = () => (aiAvail || []).slice().sort((a, b) => {
+    const s = (id) => (/flash-lite/.test(id) ? 200 : 100) + aiVer(id) - (/preview/.test(id) ? 0.5 : 0) - (/-\d{3}$/.test(id) ? 0.2 : 0);
+    return s(b) - s(a);
+  });
+  const aiHedgeModel = () => aiFastList()[0] || AI_FAST;
+  // как быстро отвечает каждая модель (среднее, мс) — первой спрашиваем самую быструю
+  let aiSpeed = {};
+  try { aiSpeed = JSON.parse(GM_getValue('aiSpeed', '{}')) || {}; } catch (e) { aiSpeed = {}; }
+  function aiSpeedNote(model, ms) {
+    const old = aiSpeed[model];
+    aiSpeed[model] = old == null ? Math.round(ms) : Math.round(old * 0.6 + ms * 0.4);
+    GM_setValue('aiSpeed', JSON.stringify(aiSpeed));
+  }
+  // незнакомые модели считаем «средними», чтобы скрипт их тоже попробовал и узнал их скорость
+  const aiSpeedOf = (id) => (aiSpeed[id] != null ? aiSpeed[id] : /flash-lite/.test(id) ? 6000 : 9000);
+  // красивое имя для любой модели: gemini-2.5-flash-lite → «2.5 Flash-Lite»
+  const aiPretty = (id) => String(id || '').replace(/^gemini-/, '').replace(/-preview.*$/, ' preview').replace(/-(\d{3})$/, '').replace(/-flash-lite/, ' Flash-Lite').replace(/-flash/, ' Flash');
   // перегружен (500/503), лимит (429), нет модели (404/400), молчит (0) — пробуем следующую модель
   const AI_RETRY = (st) => st === 400 || st === 404 || st === 429 || st >= 500 || st === 0;
   // «размышления» перед ответом у моделей Flash отнимают по 10–30 с — для коротких ответов они не нужны
@@ -4531,13 +4575,21 @@
   // один запрос к модели: { list } — готово; { err, retry } — не вышло (retry — есть смысл спросить другую модель)
   async function aiGemOnce(model, timeout) {
     let r;
+    const t0 = Date.now(), think = aiThink(model);
+    const logIt = (st, extra) => console.info('[EmoStudio] Gemini ' + model + ' → ' + st + ' за ' + ((Date.now() - t0) / 1000).toFixed(1) + ' с · размышления: ' + (think.thinkingConfig ? JSON.stringify(think.thinkingConfig) : 'по умолчанию') + (extra ? ' · ' + extra : ''));
     try {
       r = await aiPost('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', { 'x-goog-api-key': ai.keys.gemini }, {
         systemInstruction: { parts: [{ text: AI_SYSTEM }] },
         contents: [{ role: 'user', parts: [{ text: aiPrompt() }] }],
-        generationConfig: { temperature: 1.1, responseMimeType: 'application/json', ...aiThink(model) },
+        generationConfig: { temperature: 1.1, responseMimeType: 'application/json', ...think },
       }, timeout);
-    } catch (e) { return { err: new Error('Gemini ' + model.replace('gemini-', '') + ' не ответил за ' + Math.round(timeout / 1000) + ' с'), retry: true }; }
+    } catch (e) { logIt('нет ответа'); aiSpeedNote(model, 60000); return { err: new Error('Gemini ' + aiPretty(model) + ' не ответил за ' + Math.round(timeout / 1000) + ' с'), retry: true }; }
+    // скорость: удачный ответ — его время; перегрузка или лимит — «медленная»; нет такой модели — больше не спрашиваем
+    if (r.status >= 200 && r.status < 300) aiSpeedNote(model, Date.now() - t0);
+    else if (r.status === 404) aiSpeedNote(model, 999999);
+    else if (r.status === 429 || r.status >= 500) aiSpeedNote(model, 45000);
+    const um = r.j && r.j.usageMetadata;
+    logIt(String(r.status), um ? 'думала токенов: ' + (um.thoughtsTokenCount || 0) + ', текста: ' + (um.candidatesTokenCount || 0) : (r.j && r.j.error && r.j.error.message ? String(r.j.error.message).slice(0, 120) : ''));
     if (r.status >= 200 && r.status < 300 && r.j) {
       const cand = (r.j.candidates || [])[0];
       const txt = cand && cand.content ? (cand.content.parts || []).filter((x) => !x.thought).map((x) => x.text || '').join('\n') : '';
@@ -4553,7 +4605,7 @@
     return { err: new Error(aiErr(r.status, r.j)), retry: !key && AI_RETRY(r.status), fatal: key };
   }
   // ждём модель; если молчит дольше 6 с — параллельно спрашиваем быструю Flash-Lite и берём того, кто ответит первым
-  function aiGemRace(model) {
+  function aiGemRace(model, hedge) {
     return new Promise((resolve) => {
       let done = false, pending = 1, last = null;
       const fin = (r) => {
@@ -4563,18 +4615,26 @@
         if (--pending <= 0) { done = true; resolve(last); }
       };
       aiGemOnce(model, 40000).then(fin);
-      if (model !== AI_FAST) setTimeout(() => { if (!done) { pending++; aiGemOnce(AI_FAST, 40000).then(fin); } }, 5000);
+      if (hedge && hedge !== model) setTimeout(() => { if (!done) { pending++; aiGemOnce(hedge, 40000).then(fin); } }, 5000);
     });
   }
   async function aiGemini() {
-    const ms = AI_PROVIDERS.gemini.models.map((m) => m.id), chosen = ai.models.gemini;
-    const first = aiPreferNow() || chosen;
-    const order = [first, ...ms.filter((m) => m !== first)];
+    await aiLoadModels();
+    const builtin = AI_PROVIDERS.gemini.models.map((m) => m.id), chosen = ai.models.gemini;
+    // есть список моделей ключа — не тратим время на те, которых у него нет; дальше — по замеренной скорости
+    const exists = (id) => !aiAvail || aiAvail.includes(id);
+    const pool = [...new Set([...(aiAvail || []), ...builtin])].filter((id) => exists(id) && aiSpeedOf(id) < 999999);
+    let order = pool.slice().sort((a, b) => aiSpeedOf(a) - aiSpeedOf(b));
+    // выбранную в ⚙ модель спрашиваем первой, пока она не оказалась медленной
+    if (pool.includes(chosen) && aiSpeedOf(chosen) < 9000) order = [chosen, ...order.filter((x) => x !== chosen)];
+    order = order.slice(0, 4);
+    if (!order.length) order = [AI_FAST];
+    console.info('[EmoStudio] порядок моделей:', order.map((m) => m + (aiSpeed[m] != null ? ' (~' + (aiSpeed[m] / 1000).toFixed(1) + ' с)' : '')).join(' → '));
     let lastErr = null;
     for (let pass = 0; pass < 2; pass++) {
       if (pass) await sleep(1200 + Math.random() * 1200);
       for (const model of order) {
-        const r = await aiGemRace(model);
+        const r = await aiGemRace(model, order.find((x) => x !== model));
         if (r.list) { aiSetPrefer(r.model, chosen); return r.list; }
         lastErr = r.err;
         if (r.fatal || !r.retry) throw lastErr;
@@ -5240,7 +5300,8 @@
   // в подзаголовке — модель, которая реально отвечает (если выбранная не отвечала, скрипт перешёл на другую)
   const aiModelName = () => {
     const P = aiProv(), id = (ai.provider === 'gemini' && aiPreferNow()) || ai.models[ai.provider];
-    return P.n + ' ' + ((P.models.find((m) => m.id === id) || P.models[0]).n.replace(P.n + ' ', ''));
+    const known = P.models.find((m) => m.id === id);
+    return P.n + ' ' + (known ? known.n.replace(P.n + ' ', '') : ai.provider === 'gemini' ? aiPretty(id) : P.models[0].n);
   };
   // статус окна: точка-индикатор и текст в плашке; новая запись мягко «въезжает»
   function cardStatus(box, t, k) {
