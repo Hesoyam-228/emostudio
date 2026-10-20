@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.9.4
+// @version      1.10
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -1008,6 +1008,23 @@
   // ======================================================================
   let schRunning = false;
 
+  // вкладка «RinoAkuma» (для Никиты): картинки по порядку получают время из списка — все в один выбранный день
+  const RINO_DEF = ['00', '08', '16', '22', '02', '04', '12', '20', '00', '04', '01', '09', '17', '23', '03',
+    '05', '13', '21', '01', '05', '02', '06', '10', '14', '18', '03', '07', '11', '15', '19'].map((h) => h + ':00');
+  // «12AM», «8 pm», «16», «16:00» → «HH:00» (DA принимает только целые часы)
+  function rinoParse(text) {
+    const times = [], bad = [];
+    String(text || '').split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean).forEach((tok) => {
+      const m = /^(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m?\.?$/i.exec(tok) || /^(\d{1,2})(?::(\d{2}))?()$/.exec(tok);
+      let h = m ? +m[1] : NaN;
+      if (m && m[3]) { if (h < 1 || h > 12) h = NaN; else h = (h % 12) + (/p/i.test(m[3]) ? 12 : 0); }
+      if (!(h >= 0 && h <= 23)) { bad.push(tok); return; }
+      times.push(String(h).padStart(2, '0') + ':00');
+    });
+    return { times, bad };
+  }
+  const rinoFmt = (t) => { const h = +t.slice(0, 2); return (h % 12 || 12) + (h < 12 ? 'AM' : 'PM'); };
+  const rinoText = (list) => { const rows = []; for (let i = 0; i < list.length; i += 5) rows.push(list.slice(i, i + 5).map(rinoFmt).join(', ')); return rows.join('\n'); };
   const schDefaults = () => ({
     mode: 'interval',              // slots — «в заданное время», interval — «с интервалом»
     tz: 'local',                   // всегда время компьютера
@@ -1020,6 +1037,8 @@
     pages: true,                   // закончив страницу Студии, переходить на следующую и продолжать
     startAt: '',                   // своё время старта (режим interval) «2026-10-20T18:00»; пусто — ближайший целый час
     booked: [],                    // часы, которые скрипт уже занял (чтобы новые картинки шли дальше)
+    rinoDate: '',                  // вкладка RinoAkuma: «2026-10-20»; пусто — завтра
+    rinoTimes: RINO_DEF.slice(),   // вкладка RinoAkuma: время по порядку — 1-я картинка, 2-я, 3-я…
   });
   let sch = schDefaults();
   try { const o = JSON.parse(GM_getValue('sch', 'null')); if (o && typeof o === 'object') sch = Object.assign(sch, o); } catch (e) { /* значения по умолчанию */ }
@@ -1034,6 +1053,9 @@
   if (!Array.isArray(sch.booked)) sch.booked = [];
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:00$/.test(sch.startAt || '')) sch.startAt = '';
   sch.jump = Math.max(0, sch.jump | 0); sch.from = Math.max(1, sch.from | 0);
+  if (!Array.isArray(sch.rinoTimes) || !sch.rinoTimes.length || sch.rinoTimes.some((t) => !/^\d{2}:00$/.test(t))) sch.rinoTimes = RINO_DEF.slice();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sch.rinoDate || '')) sch.rinoDate = '';
+  if (!['slots', 'interval', 'rino'].includes(sch.mode)) sch.mode = 'interval';
   ['start', 'startTime', 'stagger', 'fieldTz', 'hv'].forEach((k) => { delete sch[k]; });
   const schSave = () => GM_setValue('sch', JSON.stringify(sch));
 
@@ -1097,9 +1119,25 @@
   const startMs = (s) => Math.max(nextHourMs(s.tz), startRaw(s));
   // Строит расписание: массив из n моментов (мс), начиная с ближайшего целого часа (или со своего старта).
   // taken — Map(номер часа → сколько картинок там уже стоит): эти часы пропускаются.
-  function buildPlan(n, s, taken) {
+  // дата вкладки RinoAkuma: выбранная или завтра
+  function rinoDay(s) {
+    const d = pD(s.rinoDate);
+    if (d) return d;
+    const t = partsIn(Date.now(), 'local'), q = partsIn(toUtc(t.y, t.mo, t.d + 1, 12, 0, 'local'), 'local');
+    return [q.y, q.mo, q.d];
+  }
+  function buildPlan(n, s, taken, offset) {
     const tz = s.tz, out = [], warns = [];
     taken = taken || new Map();
+    // RinoAkuma: n картинок подряд получают время из списка, начиная с offset-й; день один и тот же
+    if (s.mode === 'rino') {
+      const d = rinoDay(s), list = (s.rinoTimes || []).slice(offset || 0, (offset || 0) + n);
+      if (!list.length) return { plan: [], warns: ['Список времени пустой — добавьте время в «Список времени»'] };
+      list.forEach((t) => { const tt = pT(t); out.push(toUtc(d[0], d[1], d[2], tt[0], 0, tz)); });
+      const lim = Date.now() + SCH_LEAD, past = out.filter((ms) => ms < lim);
+      if (past.length) warns.push('На ' + pad2(d[2]) + '.' + pad2(d[1]) + '.' + d[0] + ' уже прошло: ' + [...new Set(past.map((ms) => fmt12(partsIn(ms, tz).h, 0)))].slice(0, 4).join(', ') + ' — DA не примет прошедшее время, выберите дату позже');
+      return { plan: out, warns, first: out[0], past: past.length };
+    }
     if (!s.days.some(Boolean)) return { plan: [], warns: ['Выберите хотя бы один день недели'] };
     const first = s.mode === 'interval' ? startMs(s) : nextHourMs(tz);
     const per = Math.max(1, s.per | 0);
@@ -1996,8 +2034,9 @@
     if (running) return status('Сначала остановите AutoLiker', 'err');
     if (stage === 'like' || stage === 'verify') return status('Сначала закончите калибровку лайков', 'err');
     if (!onStudio()) return status('Откройте Студию (deviantart.com/studio) и нажмите снова', 'err');
-    const chk = buildPlan(1, sch, takenMap(schState.page));
+    const chk = sch.mode === 'rino' ? buildPlan(sch.rinoTimes.length, sch, null, 0) : buildPlan(1, sch, takenMap(schState.page));
     if (!chk.plan.length) return status(chk.warns[0] || 'Расписание пустое', 'err');
+    if (chk.past) return status(chk.warns[0], 'err');
     schRunning = true; schBtnHooks.forEach((f) => f());
     try { await schMain(limit, rs); } catch (e) { schStop('Ошибка планировщика: ' + (e && e.message || e), 'err'); }
     if (schRunning) schStop('Остановлено');
@@ -2006,7 +2045,7 @@
   async function schMain(limit, rs) {
     rs = rs || {};
     let pos = rs.pos || 0, page = rs.page || 1, ok = rs.ok || 0, failed = rs.failed || 0, roundedN = rs.rounded || 0, tried = rs.tried || 0;
-    let left = rs.left != null ? (rs.left < 0 ? Infinity : rs.left) : Math.min(limit || Infinity, sch.count > 0 ? sch.count : Infinity);
+    let left = rs.left != null ? (rs.left < 0 ? Infinity : rs.left) : Math.min(limit || Infinity, sch.mode === 'rino' ? sch.rinoTimes.length : sch.count > 0 ? sch.count : Infinity);
     let streak = 0, lastWhy = '', pageFail = false;
     for (;;) {
       status('Загружаю список картинок…' + (page > 1 ? ' (страница ' + page + ')' : ''), 'run');
@@ -2019,7 +2058,7 @@
       const todo = pickCards(cards, true, pos);
       const n = Math.min(todo.length, left);
       if (n) {
-        const { plan } = buildPlan(n, sch, takenMap(pageBooked(cards)));
+        const { plan } = buildPlan(n, sch, takenMap(pageBooked(cards)), tried); // RinoAkuma: продолжаем список с того же места
         if (plan.length < n) return schStop('Расписание вмещает только ' + plan.length + ' из ' + n + ' картинок — расширьте дни или часы', 'err');
         for (let i = 0; i < n && schRunning; i++) {
           const key = cardKey(todo[i]);
@@ -2030,12 +2069,14 @@
             schState.prog = (tried + 1) + (left !== Infinity ? '/' + (tried + left) : ''); paintTitle();
             status((page > 1 ? 'Стр. ' + page + ' · к' : 'К') + 'артинка ' + (i + 1) + ' из ' + n + ' → ' + fmtAt(plan[i], 'local') + (a ? ' (повтор ' + a + ')' : ''), 'run');
             setProgress(i / n);
+            if (sch.mode === 'rino' && schState.rinoMark) schState.rinoMark(tried, 'now');
             res = await schOne(el, plan[i]);
             if (res.ok) break;
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
             if (a < 2 && schRunning) await sleep(4000 * (a + 1));
           }
           if (!schRunning) break;
+          if (sch.mode === 'rino' && schState.rinoMark) schState.rinoMark(tried, res && res.ok ? 'ok' : 'err');
           tried++; left--;
           if (res && res.ok) {
             ok++; streak = 0; if (res.rounded) roundedN++;
@@ -2281,12 +2322,75 @@
     // ---- режим ----
     const modeBtns = [...sh.querySelectorAll('#sMode button')];
     const paintMode = () => {
-      const i = sch.mode === 'interval' ? 1 : 0;
+      const i = sch.mode === 'rino' ? 2 : sch.mode === 'interval' ? 1 : 0;
       modeBtns.forEach((b, n) => b.setAttribute('aria-selected', String(n === i)));
       $('#sModeThumb').style.transform = 'translateX(' + (i * 100) + '%)';
-      $('#sSlots').hidden = i === 1; $('#sInt').hidden = i === 0;
-      $('#sModeHint').textContent = i ? 'Картинки выходят одна за другой через равный шаг — например, каждый час.'
-        : 'Каждый выбранный день картинки выходят в одни и те же часы — например, в 6 PM и 9 PM.';
+      $('#sSlots').hidden = i !== 0; $('#sInt').hidden = i !== 1; $('#sRino').hidden = i !== 2; $('#sDaysRow').hidden = i === 2;
+      $('#sModeHint').textContent = i === 2 ? 'Картинки по порядку получают время из списка: 1-я — первое время, 2-я — второе… Все в один выбранный день.'
+        : i ? 'Картинки выходят одна за другой через равный шаг — например, каждый час.'
+          : 'Каждый выбранный день картинки выходят в одни и те же часы — например, в 6 PM и 9 PM.';
+      if (i === 2) drawRino();
+    };
+    // ---- вкладка RinoAkuma: дата, сетка «время по порядку», свой список ----
+    const rnDate = $('#sRinoDate'), rnText = $('#sRinoText'), rnMsg = $('#sRinoMsg'), rnFold = $('#sRinoFold'), rnEdit = $('#sRinoEdit');
+    const rnMarks = {}; // номер в списке → 'now' | 'ok' | 'err' (во время работы)
+    const dayStr = (d) => pad2(d[2]) + '.' + pad2(d[1]) + '.' + d[0];
+    function drawRino() {
+      const d = rinoDay(sch), lim = Date.now() + SCH_LEAD;
+      if (shadow.activeElement !== rnDate) { rnDate.value = dayStr(d); rnDate.classList.remove('bad'); }
+      const t = partsIn(Date.now(), 'local');
+      $('#sRinoQuick').querySelectorAll('[data-d]').forEach((b) => {
+        const q = partsIn(toUtc(t.y, t.mo, t.d + +b.dataset.d, 12, 0, 'local'), 'local');
+        b.setAttribute('aria-pressed', String(q.y === d[0] && q.mo === d[1] && q.d === d[2]));
+      });
+      const grid = $('#sRinoGrid'); grid.innerHTML = '';
+      sch.rinoTimes.forEach((tm, i) => {
+        const c = document.createElement('span');
+        const ms = toUtc(d[0], d[1], d[2], +tm.slice(0, 2), 0, 'local');
+        c.className = 'rn-c' + (rnMarks[i] ? ' ' + rnMarks[i] : ms < lim ? ' past' : '');
+        c.style.setProperty('--i', i);
+        c.title = 'Картинка №' + (i + 1) + ' → ' + fmt12(+tm.slice(0, 2), 0) + (ms < lim && !rnMarks[i] ? ' — это время на выбранную дату уже прошло' : '');
+        c.innerHTML = '<i></i>'; c.firstChild.textContent = i + 1; c.append(rinoFmt(tm));
+        grid.appendChild(c);
+      });
+      const n = sch.rinoTimes.length;
+      $('#sRinoN').textContent = 'первые ' + n + ' ' + (n % 10 === 1 && n % 100 !== 11 ? 'картинка' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'картинки' : 'картинок') + ' · ' + dayStr(d);
+      if (shadow.activeElement !== rnText) rnText.value = rinoText(sch.rinoTimes);
+    }
+    schState.rinoMark = (i, st) => { rnMarks[i] = st; if (sch.mode === 'rino') drawRino(); };
+    schBtnHooks.push(() => { if (schRunning) Object.keys(rnMarks).forEach((k) => delete rnMarks[k]); });
+    const setRinoDate = (d) => { sch.rinoDate = d[0] + '-' + pad2(d[1]) + '-' + pad2(d[2]); schSave(); drawRino(); render(); };
+    rnDate.onchange = () => {
+      const m = /^\s*(\d{1,2})[.\/\-](\d{1,2})[.\/\-](\d{2,4})\s*$/.exec(rnDate.value);
+      const y = m ? (+m[3] < 100 ? 2000 + +m[3] : +m[3]) : 0, mo = m ? +m[2] : 0, dd = m ? +m[1] : 0;
+      const ok = m && mo >= 1 && mo <= 12 && dd >= 1 && dd <= 31 && partsIn(toUtc(y, mo, dd, 12, 0, 'local'), 'local').d === dd;
+      if (!ok) { rnDate.classList.add('bad'); return status('Дата как на скриншоте: день.месяц.год — например 20.10.2026', 'err'); }
+      rnDate.classList.remove('bad'); setRinoDate([y, mo, dd]); status('Дата: ' + dayStr([y, mo, dd]), 'ok');
+    };
+    rnDate.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); rnDate.blur(); } };
+    $('#sRinoQuick').onclick = (e) => {
+      const b = e.target.closest('[data-d]'); if (!b) return;
+      const t = partsIn(Date.now(), 'local'), q = partsIn(toUtc(t.y, t.mo, t.d + +b.dataset.d, 12, 0, 'local'), 'local');
+      setRinoDate([q.y, q.mo, q.d]);
+    };
+    const paintRinoFold = (open) => { rnFold.classList.toggle('off', !open); rnFold.inert = !open; rnEdit.classList.toggle('open', open); rnEdit.setAttribute('aria-expanded', String(open)); };
+    let rnOpen = false; paintRinoFold(false);
+    rnEdit.onclick = () => { rnOpen = !rnOpen; paintRinoFold(rnOpen); if (rnOpen) setTimeout(() => rnText.focus(), 60); };
+    let rnT = 0;
+    rnText.oninput = () => {
+      clearTimeout(rnT);
+      rnT = setTimeout(() => {
+        const r = rinoParse(rnText.value);
+        if (r.bad.length) { rnMsg.className = 'rn-msg err'; rnMsg.textContent = 'Не понял: ' + r.bad.slice(0, 4).join(', ') + ' — пишите как 12AM, 8PM или 16'; return; }
+        if (!r.times.length) { rnMsg.className = 'rn-msg err'; rnMsg.textContent = 'Список пустой'; return; }
+        sch.rinoTimes = r.times; schSave(); drawRino(); render();
+        rnMsg.className = 'rn-msg ok'; rnMsg.textContent = 'Сохранено: ' + r.times.length + ' по порядку';
+      }, 400);
+    };
+    rnText.onblur = () => { rnText.value = rinoText(sch.rinoTimes); };
+    $('#sRinoReset').onclick = () => {
+      sch.rinoTimes = RINO_DEF.slice(); schSave(); rnText.value = rinoText(sch.rinoTimes); drawRino(); render();
+      rnMsg.className = 'rn-msg ok'; rnMsg.textContent = 'Вернул стандартные 30 времён';
     };
     modeBtns.forEach((b) => { b.onclick = () => { sch.mode = b.dataset.m; schSave(); paintMode(); render(); }; });
 
@@ -2430,10 +2534,11 @@
     let lastSlots = '';
     function render() {
       if (onStudio()) schState.found = pickCards(listCards()).length;
-      const n = sch.count > 0 ? Math.min(sch.count, schState.found || sch.count) : schState.found;
+      const n = sch.mode === 'rino' ? Math.min(schState.found || sch.rinoTimes.length, sch.rinoTimes.length)
+        : sch.count > 0 ? Math.min(sch.count, schState.found || sch.count) : schState.found;
       const taken = takenMap(schState.page);
       const show = Math.max(n, 1);
-      const { plan, warns, first } = buildPlan(Math.max(show, 6), sch, taken);
+      const { plan, warns, first } = buildPlan(sch.mode === 'rino' ? Math.max(show, Math.min(6, sch.rinoTimes.length)) : Math.max(show, 6), sch, taken, 0);
       const real = plan.slice(0, show);
       setNum($('#sN'), n || 0);
       $('#sNt').textContent = n === 1 ? 'картинка в очереди' : n > 1 && n < 5 ? 'картинки в очереди' : n ? 'картинок в очереди' : 'черновиков пока нет';
@@ -2450,7 +2555,8 @@
         : '0 — подряд, без пропусков';
       $('#sTz').textContent = tzShort(Date.now(), 'local');
       const rg = $('#sRange');
-      if (real.length) rg.textContent = (n ? '' : 'Первая выйдет: ') + fmtNice(real[0]) + (real.length > 1 ? ' → ' + fmtNice(real[real.length - 1]) : '');
+      if (sch.mode === 'rino') rg.textContent = dayWord(toUtc(...rinoDay(sch), 12, 0, 'local')) + ' · по списку RinoAkuma · ' + Math.min(n || sch.rinoTimes.length, sch.rinoTimes.length) + ' из ' + sch.rinoTimes.length;
+      else if (real.length) rg.textContent = (n ? '' : 'Первая выйдет: ') + fmtNice(real[0]) + (real.length > 1 ? ' → ' + fmtNice(real[real.length - 1]) : '');
       else rg.textContent = 'Расписание пустое';
       // ближайшие слоты чипами
       const slots = plan.slice(0, 6);
@@ -3023,6 +3129,29 @@
   .adv-h{padding:12px 14px 4px;font-size:10.5px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--sub);border-top:.5px solid var(--line)}
   .adv-h+.row,.adv-h+.lrow{border-top:0!important}
   .mode-hint{margin:-4px 4px 10px;font-size:11.5px;line-height:1.35;color:var(--sub)}
+  /* вкладка RinoAkuma */
+  .rn-date{width:122px;padding:7px 10px;border:0;border-radius:10px;outline:none;background:var(--tile);color:var(--text);font:inherit;font-size:13px;font-weight:600;
+    text-align:center;font-variant-numeric:tabular-nums;letter-spacing:.02em;box-shadow:inset 0 0 0 .5px var(--line);transition:box-shadow .25s}
+  .rn-date:focus{box-shadow:inset 0 0 0 1.5px var(--a1)}
+  .rn-date.bad{box-shadow:inset 0 0 0 1.5px var(--err)}
+  .rn-quick{display:flex;gap:6px;padding-top:0!important;border-top:0!important}
+  .rn-quick .pbtn{flex:1;padding:6px 0;font-size:11.5px}
+  .rn-quick .pbtn[aria-pressed=true]{background:rgba(var(--a1rgb),.2);box-shadow:inset 0 0 0 1.5px var(--a1)}
+  .rn-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-top:8px}
+  .rn-c{position:relative;padding:7px 0 6px;border-radius:9px;background:var(--tile);font-size:11.5px;font-weight:650;text-align:center;font-variant-numeric:tabular-nums;
+    animation:rise .45s var(--spring) backwards;animation-delay:calc(var(--i) * 12ms);transition:background .3s,color .3s,box-shadow .3s,opacity .3s}
+  .rn-c i{position:absolute;top:2px;left:4px;font-style:normal;font-size:8px;font-weight:600;color:var(--sub);opacity:.75}
+  .rn-c.past{opacity:.42;text-decoration:line-through}
+  .rn-c.now{box-shadow:inset 0 0 0 1.5px var(--a1);background:rgba(var(--a1rgb),.16);animation:glowR 1.2s ease-in-out infinite}
+  .rn-c.ok{background:rgba(48,209,88,.2);color:var(--ok)}
+  .rn-c.err{background:rgba(255,69,58,.18);color:var(--err)}
+  @keyframes glowR{50%{background:rgba(var(--a1rgb),.3)}}
+  .rn-text{display:block;width:100%;min-height:110px;resize:vertical;padding:9px 11px;border:0;border-radius:12px;outline:none;background:var(--tile);color:var(--text);
+    font:12.5px/1.55 ${FONTS.mono};box-shadow:inset 0 0 0 .5px var(--line);transition:box-shadow .25s}
+  .rn-text:focus{box-shadow:inset 0 0 0 1.5px var(--a1)}
+  .rn-msg{margin-top:6px}
+  .rn-msg.err{color:var(--err)}
+  .rn-msg.ok{color:var(--ok)}
   .card.sw{padding:12px 14px;margin-bottom:10px;background:rgba(255,159,10,.15);animation:swap .4s var(--smooth)}
   .sw-h{display:flex;justify-content:space-between;align-items:center;gap:8px}
   .sw-dots{display:flex;gap:4px}
@@ -3427,10 +3556,11 @@
           <div class="notice" id="sNote" hidden></div>
           <div id="schWiz"></div>
 
-          <nav class="seg mini" id="sMode" style="--n:2" role="tablist" aria-label="Режим расписания">
+          <nav class="seg mini" id="sMode" style="--n:3" role="tablist" aria-label="Режим расписания">
             <i id="sModeThumb"></i>
-            <button role="tab" data-m="slots" aria-selected="true">В заданное время</button>
+            <button role="tab" data-m="slots" aria-selected="true">По времени</button>
             <button role="tab" data-m="interval" aria-selected="false">С интервалом</button>
+            <button role="tab" data-m="rino" aria-selected="false">RinoAkuma</button>
           </nav>
           <p class="mode-hint" id="sModeHint"></p>
 
@@ -3457,7 +3587,27 @@
                   <div class="dts"><span class="dl">с</span><input type="time" id="sWinFrom" aria-label="С какого часа"><span class="dl">до</span><input type="time" id="sWinTo" aria-label="До какого часа"></div></div>
               </div></div>
             </div>
-            <div class="row"><div class="rl"><span>Дни недели</span></div><div class="days" id="sDays"></div></div>
+            <div id="sRino" hidden>
+              <div class="row inline"><div><span>Дата</span><small>день не меняется — все картинки в этот день</small></div>
+                <input class="rn-date" id="sRinoDate" placeholder="ДД.ММ.ГГГГ" inputmode="numeric" spellcheck="false" aria-label="Дата: день.месяц.год"></div>
+              <div class="row rn-quick" id="sRinoQuick"><button class="pbtn" data-d="0">Сегодня</button><button class="pbtn" data-d="1">Завтра</button><button class="pbtn" data-d="2">Послезавтра</button></div>
+              <div class="row">
+                <div class="rl"><span>Время по порядку</span><small id="sRinoN"></small></div>
+                <div class="rn-grid" id="sRinoGrid"></div>
+              </div>
+              <button class="lrow" id="sRinoEdit" aria-expanded="false">
+                <span class="ico violet"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></span>
+                <span class="lt"><b>Список времени</b><small>свой порядок через запятую: 12AM, 8AM, 4PM…</small></span>${CHEV}
+              </button>
+              <div class="fold off" id="sRinoFold"><div>
+                <div class="row"><textarea class="rn-text" id="sRinoText" rows="6" spellcheck="false" aria-label="Список времени"></textarea><small class="rn-msg" id="sRinoMsg"></small></div>
+                <button class="lrow" id="sRinoReset">
+                  <span class="ico red"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
+                  <span class="lt"><b>Вернуть стандартное</b><small>30 картинок, как в схеме RinoAkuma</small></span>
+                </button>
+              </div></div>
+            </div>
+            <div class="row" id="sDaysRow"><div class="rl"><span>Дни недели</span></div><div class="days" id="sDays"></div></div>
           </div>
 
           <button class="go sgo" id="sGo" title="Проставить время на картинках в Студии">${ICON_PLAY}${ICON_STOP}<span id="sGoLabel">Запланировать</span></button>
