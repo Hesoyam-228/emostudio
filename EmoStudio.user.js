@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10.6
+// @version      1.10.7
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -1009,6 +1009,7 @@
     mode: 'interval',              // slots — «в заданное время», interval — «с интервалом»
     tz: 'local',                   // всегда время компьютера
     times: ['18:00'], per: 1,      // режим slots: времена и сколько картинок в один час
+    slotsDay: '',                  // режим slots: с какого дня начинать «2026-10-21»; пусто — с сегодняшнего
     every: 1, unit: 'hour',        // режим interval: шаг
     win: false, winFrom: '10:00', winTo: '22:00',
     days: [1, 1, 1, 1, 1, 1, 1],   // Пн…Вс
@@ -1035,6 +1036,7 @@
   if (!Array.isArray(sch.days) || sch.days.length !== 7) sch.days = [1, 1, 1, 1, 1, 1, 1];
   if (!Array.isArray(sch.booked)) sch.booked = [];
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:00$/.test(sch.startAt || '')) sch.startAt = '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sch.slotsDay || '')) sch.slotsDay = '';
   sch.jump = Math.max(0, sch.jump | 0); sch.from = Math.max(1, sch.from | 0);
   if (!Array.isArray(sch.rinoTimes) || !sch.rinoTimes.length || sch.rinoTimes.some((t) => !/^\d{2}:00$/.test(t))) sch.rinoTimes = RINO_DEF.slice();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sch.rinoDate || '')) sch.rinoDate = '';
@@ -1150,7 +1152,9 @@
       return { plan: out, idx, warns, first: out[0], free: r.free.length, rino: r };
     }
     if (!s.days.some(Boolean)) return { plan: [], warns: ['Выберите хотя бы один день недели'] };
-    const first = s.mode === 'interval' ? startMs(s) : nextHourMs(tz);
+    // «По времени»: с выбранного дня (полночь), но не раньше ближайшего целого часа
+    const sd = pD(s.slotsDay);
+    const first = s.mode === 'interval' ? startMs(s) : Math.max(nextHourMs(tz), sd ? toUtc(sd[0], sd[1], sd[2], 0, 0, tz) : 0);
     const per = Math.max(1, s.per | 0);
     let busy = 0, lastLab = '';
     const put = (ms) => {
@@ -2349,7 +2353,7 @@
       wrap.value = inp.value || '18:00';
       inp.replaceWith(wrap);
     };
-    ['sWinFrom', 'sWinTo', 'sTimeNew'].forEach((id) => upgradeTime($('#' + id)));
+    ['sWinFrom', 'sWinTo', 'sTimeNew', 'sFillFrom', 'sFillTo'].forEach((id) => upgradeTime($('#' + id)));
     const upgradeSelect = (sel) => {
       const c = csMake([...sel.options].map((o) => [o.value, o.textContent]), sel.value, (v) => { sel.value = v; sel.dispatchEvent(new Event('change')); }, sel.getAttribute('aria-label'));
       sel.hidden = true; sel.before(c.btn);
@@ -2364,8 +2368,9 @@
       $('#sSlots').hidden = i !== 0; $('#sInt').hidden = i !== 1; $('#sRino').hidden = i !== 2; $('#sDaysRow').hidden = i === 2;
       $('#sModeHint').textContent = i === 2 ? 'Картинки по порядку получают время из списка: 1-я — первое время, 2-я — второе… Все в один выбранный день.'
         : i ? 'Картинки выходят одна за другой через равный шаг — например, каждый час.'
-          : 'Каждый выбранный день картинки выходят в одни и те же часы — например, в 6 PM и 9 PM.';
+          : 'Картинки занимают выбранные часы в выбранный день, следующие — те же часы на следующий день, и так по кругу.';
       if (i === 2) drawRino();
+      if (i === 0) drawSlDay();
     };
     // ---- вкладка RinoAkuma: дата, сетка «время по порядку», свой список ----
     const rnDate = $('#sRinoDate'), rnText = $('#sRinoText'), rnMsg = $('#sRinoMsg'), rnFold = $('#sRinoFold'), rnEdit = $('#sRinoEdit');
@@ -2373,6 +2378,21 @@
     const rnMarks = {};
     let rnMarkDay = '';
     const dayStr = (d) => pad2(d[2]) + '.' + pad2(d[1]) + '.' + d[0];
+    // «21.10.2026», «21.10.26», «21/10/2026» → [год, месяц, день] или null
+    const parseDmy = (v) => {
+      const m = /^\s*(\d{1,2})[.\/\-](\d{1,2})[.\/\-](\d{2,4})\s*$/.exec(v || '');
+      const y = m ? (+m[3] < 100 ? 2000 + +m[3] : +m[3]) : 0, mo = m ? +m[2] : 0, dd = m ? +m[1] : 0;
+      return m && mo >= 1 && mo <= 12 && dd >= 1 && dd <= 31 && partsIn(toUtc(y, mo, dd, 12, 0, 'local'), 'local').d === dd ? [y, mo, dd] : null;
+    };
+    // кнопки «Сегодня / Завтра / Послезавтра»: какая из них совпадает с выбранным днём
+    const paintQuick = (box, d) => {
+      const t = partsIn(Date.now(), 'local');
+      box.querySelectorAll('[data-d]').forEach((b) => {
+        const q = partsIn(toUtc(t.y, t.mo, t.d + +b.dataset.d, 12, 0, 'local'), 'local');
+        b.setAttribute('aria-pressed', String(q.y === d[0] && q.mo === d[1] && q.d === d[2]));
+      });
+    };
+    const quickDay = (n) => { const t = partsIn(Date.now(), 'local'), q = partsIn(toUtc(t.y, t.mo, t.d + n, 12, 0, 'local'), 'local'); return [q.y, q.mo, q.d]; };
     // что занято — смотрим прямо на странице Студии: удалили картинку — её время снова свободно
     const rnTaken = () => takenMap(onStudio() ? pageBooked(listCards()) : []);
     const RN_TIP = { ok: ' — уже стоит картинка', past: ' — время прошло, пропускаю', skip: ' — пропускаю: выбран старт дальше', free: '' };
@@ -2380,11 +2400,7 @@
       const d = rinoDay(sch), key = rinoKey(sch);
       if (rnMarkDay !== key) { Object.keys(rnMarks).forEach((k) => delete rnMarks[k]); rnMarkDay = key; } // другой день — старые отметки не нужны
       if (shadow.activeElement !== rnDate) { rnDate.value = dayStr(d); rnDate.classList.remove('bad'); }
-      const t = partsIn(Date.now(), 'local');
-      $('#sRinoQuick').querySelectorAll('[data-d]').forEach((b) => {
-        const q = partsIn(toUtc(t.y, t.mo, t.d + +b.dataset.d, 12, 0, 'local'), 'local');
-        b.setAttribute('aria-pressed', String(q.y === d[0] && q.mo === d[1] && q.d === d[2]));
-      });
+      paintQuick($('#sRinoQuick'), d);
       const r = rinoSlots(sch, rnTaken()), nx = r.free[0];
       // сетку собираем заново, только когда поменялся список, иначе — меняем классы (плавно, без мигания)
       const grid = $('#sRinoGrid'), gk = sch.rinoTimes.join();
@@ -2435,17 +2451,14 @@
     };
     const setRinoDate = (d) => { sch.rinoDate = d[0] + '-' + pad2(d[1]) + '-' + pad2(d[2]); schSave(); drawRino(); render(); };
     rnDate.onchange = () => {
-      const m = /^\s*(\d{1,2})[.\/\-](\d{1,2})[.\/\-](\d{2,4})\s*$/.exec(rnDate.value);
-      const y = m ? (+m[3] < 100 ? 2000 + +m[3] : +m[3]) : 0, mo = m ? +m[2] : 0, dd = m ? +m[1] : 0;
-      const ok = m && mo >= 1 && mo <= 12 && dd >= 1 && dd <= 31 && partsIn(toUtc(y, mo, dd, 12, 0, 'local'), 'local').d === dd;
-      if (!ok) { rnDate.classList.add('bad'); return status('Дата как на скриншоте: день.месяц.год — например 20.10.2026', 'err'); }
-      rnDate.classList.remove('bad'); setRinoDate([y, mo, dd]); status('Дата: ' + dayStr([y, mo, dd]), 'ok');
+      const d = parseDmy(rnDate.value);
+      if (!d) { rnDate.classList.add('bad'); return status('Дата как на скриншоте: день.месяц.год — например 20.10.2026', 'err'); }
+      rnDate.classList.remove('bad'); setRinoDate(d); status('Дата: ' + dayStr(d), 'ok');
     };
     rnDate.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); rnDate.blur(); } };
     $('#sRinoQuick').onclick = (e) => {
       const b = e.target.closest('[data-d]'); if (!b) return;
-      const t = partsIn(Date.now(), 'local'), q = partsIn(toUtc(t.y, t.mo, t.d + +b.dataset.d, 12, 0, 'local'), 'local');
-      setRinoDate([q.y, q.mo, q.d]);
+      setRinoDate(quickDay(+b.dataset.d));
     };
     const paintRinoFold = (open) => { rnFold.classList.toggle('off', !open); rnFold.inert = !open; rnEdit.classList.toggle('open', open); rnEdit.setAttribute('aria-expanded', String(open)); };
     let rnOpen = false; paintRinoFold(false);
@@ -2565,6 +2578,34 @@
       const t = pT(v); $('#sTimeNew').value = pad2((t[0] + 1) % 24) + ':00';
       status('Добавлено время ' + fmt12(t[0], 0), 'ok');
     };
+    // «Заполнить подряд»: все часы с … до … (через полночь тоже: 10 PM – 2 AM)
+    $('#sFillGo').onclick = () => {
+      const a = pT($('#sFillFrom').value), b = pT($('#sFillTo').value);
+      if (!a || !b) return status('Выберите часы «с» и «до»', 'err');
+      const hs = [];
+      for (let h = a[0]; hs.length < 24; h = (h + 1) % 24) { hs.push(pad2(h) + ':00'); if (h === b[0]) break; }
+      sch.times = hs; schSave(); drawTimes(); render();
+      status('Время выхода: с ' + fmt12(a[0], 0) + ' до ' + fmt12(b[0], 0) + ' — ' + hs.length + ' ч. в день', 'ok');
+    };
+
+    // ---- «По времени»: с какого дня начинать; дальше каждый день на те же часы ----
+    const slDate = $('#sSlDate');
+    const slDay = () => pD(sch.slotsDay) || quickDay(0);
+    function drawSlDay() {
+      const d = slDay();
+      if (shadow.activeElement !== slDate) { slDate.value = dayStr(d); slDate.classList.remove('bad'); }
+      paintQuick($('#sSlQuick'), d);
+      const gone = toUtc(d[0], d[1], d[2] + 1, 0, 0, 'local') <= Date.now();
+      $('#sSlDaySub').textContent = gone ? 'этот день уже прошёл — начну с сегодняшнего' : 'дальше — те же часы на следующий день';
+    }
+    const setSlDay = (d) => { sch.slotsDay = d[0] + '-' + pad2(d[1]) + '-' + pad2(d[2]); schSave(); drawSlDay(); render(); };
+    slDate.onchange = () => {
+      const d = parseDmy(slDate.value);
+      if (!d) { slDate.classList.add('bad'); return status('Дата: день.месяц.год — например 21.10.2026', 'err'); }
+      slDate.classList.remove('bad'); setSlDay(d); status('Начну с ' + dayStr(d), 'ok');
+    };
+    slDate.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); slDate.blur(); } };
+    $('#sSlQuick').onclick = (e) => { const b = e.target.closest('[data-d]'); if (b) setSlDay(quickDay(+b.dataset.d)); };
 
     // ---- дни недели ----
     const daysBox = $('#sDays');
@@ -3670,10 +3711,17 @@
 
           <div class="group">
             <div id="sSlots">
+              <div class="row inline"><div><span>С какого дня</span><small id="sSlDaySub">потом каждый день на те же часы</small></div>
+                <input class="rn-date" id="sSlDate" placeholder="ДД.ММ.ГГГГ" inputmode="numeric" spellcheck="false" aria-label="С какого дня: день.месяц.год"></div>
+              <div class="row rn-quick" id="sSlQuick"><button class="pbtn" data-d="0">Сегодня</button><button class="pbtn" data-d="1">Завтра</button><button class="pbtn" data-d="2">Послезавтра</button></div>
               <div class="row">
                 <div class="rl"><span>Время выхода</span></div>
                 <div class="tms" id="sTimes"></div>
                 <div class="tadd"><input type="time" id="sTimeNew" value="18:00" aria-label="Новое время"><button class="pbtn" id="sTimeAdd">Добавить</button></div>
+              </div>
+              <div class="row">
+                <div class="rl"><span>Заполнить подряд</span><small>все часы от и до — заменит список выше</small></div>
+                <div class="dts"><span class="dl">с</span><input type="time" id="sFillFrom" value="01:00" aria-label="С какого часа"><span class="dl">до</span><input type="time" id="sFillTo" value="09:00" aria-label="До какого часа"><button class="pbtn" id="sFillGo">Заполнить</button></div>
               </div>
             </div>
             <div id="sInt" hidden>
