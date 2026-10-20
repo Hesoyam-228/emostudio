@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10.8
+// @version      1.10.9
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -1016,6 +1016,7 @@
     jump: 0, from: 1,              // перепрыгивать N картинок после каждой поставленной; начинать с картинки №
     pages: true,                   // закончив страницу Студии, переходить на следующую и продолжать
     intDay: '',                    // режим interval: день старта из календаря «2026-10-21»; пусто — сегодня
+    oneDay: false,                 // режим interval: только этот день — часы кончились, на завтра не переходим
     booked: [],                    // часы, которые скрипт уже занял (чтобы новые картинки шли дальше)
     rinoDate: '',                  // вкладка RinoAkuma: «2026-10-20»; пусто — завтра
     rinoTimes: RINO_DEF.slice(),   // вкладка RinoAkuma: время по порядку — 1-я картинка, 2-я, 3-я…
@@ -1197,11 +1198,23 @@
         }
         return ms;
       };
+      // «Только этот день»: выбранный день до часа «до» (через полночь — до утра следующего дня); дальше не идём
+      let dayEnd = Infinity;
+      if (s.oneDay) {
+        const p = partsIn(first, tz), m0 = p.h * 60 + p.mi;
+        dayEnd = !s.win ? toUtc(p.y, p.mo, p.d, 23, 0, tz)
+          : toUtc(p.y, p.mo, p.d + (wf > wt && m0 > wt ? 1 : 0), w1[0], w1[1], tz);
+      }
       for (let g = 0; out.length < n && g < 20000; g++) {
         cur = norm(cur);
+        if (cur > dayEnd) break;
         put(cur);
         if (s.unit === 'day') { const p = partsIn(cur, tz); cur = toUtc(p.y, p.mo, p.d + every, p.h, 0, tz); }
         else cur += every * 3600000;
+      }
+      if (s.oneDay && !out.length) {
+        const p = partsIn(first, tz);
+        warns.push('На ' + pad2(p.d) + '.' + pad2(p.mo) + '.' + p.y + ' свободных часов' + (s.win ? ' с ' + fmt12(w0[0], 0) + ' до ' + fmt12(w1[0], 0) : '') + ' не осталось — выберите другой день');
       }
     }
     if (busy) warns.push('Пропущено занятых часов: ' + busy);
@@ -2072,7 +2085,10 @@
     const rino = sch.mode === 'rino';
     // RinoAkuma: сколько свободных времён — столько картинок и поставим
     const rinoFree = () => buildPlan(9999, sch, takenMap(pageBooked(listCards()))).plan.length;
-    let left = rs.left != null ? (rs.left < 0 ? Infinity : rs.left) : Math.min(limit || Infinity, rino ? rinoFree() : sch.count > 0 ? sch.count : Infinity);
+    // «С интервалом» + «Только этот день»: картинок ставим столько, сколько свободных часов в этом дне
+    const oneDay = sch.mode === 'interval' && sch.oneDay;
+    let left = rs.left != null ? (rs.left < 0 ? Infinity : rs.left)
+      : Math.min(limit || Infinity, rino || oneDay ? rinoFree() : Infinity, sch.count > 0 && !rino ? sch.count : Infinity);
     let streak = 0, lastWhy = '', pageFail = false;
     for (;;) {
       status('Загружаю список картинок…' + (page > 1 ? ' (страница ' + page + ')' : ''), 'run');
@@ -2086,7 +2102,8 @@
       let n = Math.min(todo.length, left);
       if (n) {
         const { plan } = buildPlan(n, sch, takenMap(pageBooked(cards)));
-        if (plan.length < n && !rino) return schStop('Расписание вмещает только ' + plan.length + ' из ' + n + ' картинок — расширьте дни или часы', 'err');
+        if (plan.length < n && !rino && !oneDay) return schStop('Расписание вмещает только ' + plan.length + ' из ' + n + ' картинок — расширьте дни или часы', 'err');
+        if (oneDay) n = Math.min(n, plan.length); // день заполнен — остальные картинки остаются без времени
         for (let i = 0; i < n && schRunning; i++) {
           const key = cardKey(todo[i]);
           let el = todo[i];
@@ -2554,6 +2571,7 @@
       stOpen = false; paintStartFold(); render();
       status('Дата: ' + dayStr(d) + ', ' + SCH_WD[(new Date(Date.UTC(...d.map((x, i) => (i === 1 ? x - 1 : x)))).getUTCDay() + 6) % 7].toLowerCase(), 'ok');
     };
+    const oneSw = $('#sOneDay'); oneSw.checked = !!sch.oneDay; oneSw.onchange = () => { sch.oneDay = oneSw.checked; schSave(); render(); };
     const skipSw = $('#sSkip'); skipSw.checked = !!sch.skipDone; skipSw.onchange = () => { sch.skipDone = skipSw.checked; schSave(); render(); };
     const pgSw = $('#sPages'); pgSw.checked = sch.pages !== false; pgSw.onchange = () => { sch.pages = pgSw.checked; schSave(); render(); };
 
@@ -2654,20 +2672,29 @@
       const rino = sch.mode === 'rino';
       const taken = rino ? rnTaken() : takenMap(schState.page);
       const rp = rino ? buildPlan(9999, sch, taken) : null, rnFree = rp ? rp.plan.length : 0; // RinoAkuma: все свободные времена
-      const n = rino ? Math.min(schState.found || rnFree, rnFree)
+      let n = rino ? Math.min(schState.found || rnFree, rnFree)
         : sch.count > 0 ? Math.min(sch.count, schState.found || sch.count) : schState.found;
+      // «Только этот день»: в очереди столько, сколько свободных часов в этом дне
+      const oneDay = sch.mode === 'interval' && sch.oneDay, cap = oneDay ? buildPlan(9999, sch, taken).plan.length : Infinity;
+      if (oneDay) n = Math.min(n, cap);
       const show = Math.max(n, 1);
       const { plan, warns, first } = rp || buildPlan(Math.max(show, 6), sch, taken);
       const real = plan.slice(0, show);
       setNum($('#sN'), n || 0);
-      $('#sNt').textContent = n === 1 ? 'картинка в очереди' : n > 1 && n < 5 ? 'картинки в очереди' : n ? 'картинок в очереди' : 'черновиков пока нет';
+      $('#sNt').textContent = n === 1 ? 'картинка в очереди' : n > 1 && n < 5 ? 'картинки в очереди' : n ? 'картинок в очереди'
+        : schState.found ? 'некуда ставить — нет свободных часов' : 'черновиков пока нет';
       const iDay = intDay();
       $('#sStart').textContent = dayStr(iDay);
-      $('#sStartSub').textContent = sch.mode === 'interval' && first ? 'первая — ' + fmtNice(first) + ', потом по шагу' : 'с этого дня, потом следующие';
+      // первая — с учётом уже занятых часов
+      $('#sStartSub').textContent = sch.mode === 'interval' && plan[0] ? 'первая — ' + fmtNice(plan[0]) + (oneDay ? ', только этот день' : ', потом по шагу')
+        : oneDay ? 'только этот день' : 'с этого дня, потом следующие';
       const wF = pT(sch.winFrom)[0], wT = pT(sch.winTo)[0];
       $('#sWinSub').textContent = wF === 0 && wT === 23 ? 'весь день'
         : wF > wT ? 'через полночь: с ' + fmt12(wF, 0) + ' до ' + fmt12(wT, 0) + ' следующего дня'
-          : 'только в эти часы, после ' + fmt12(wT, 0) + ' — на следующий день';
+          : oneDay ? 'только в эти часы этого дня' : 'только в эти часы, после ' + fmt12(wT, 0) + ' — на следующий день';
+      $('#sOneDaySub').textContent = oneDay
+        ? (cap ? 'помещается ' + cap + (schState.found > cap ? ' из ' + schState.found + ' — остальные останутся без времени' : '') : 'свободных часов в этот день нет')
+        : 'выкл. — часы кончились, следующие идут на завтра';
       const step = sch.jump + 1, nums = [0, 1, 2].map((k) => sch.from + k * step).join(', ');
       $('#sJumpSub').textContent = sch.jump
         ? 'ставит на №' + nums + '…' + (sch.order === 'rev' ? ' (считая снизу)' : sch.order === 'rnd' ? ' (по перемешанному списку)' : '') + ', между ними пропускает ' + sch.jump
@@ -3721,6 +3748,8 @@
               </div></div>
               <div class="row inline"><div><span>Время</span><small id="sWinSub">картинки выходят только в эти часы</small></div>
                 <div class="dts"><span class="dl">с</span><input type="time" id="sWinFrom" aria-label="С какого часа"><span class="dl">до</span><input type="time" id="sWinTo" aria-label="До какого часа"></div></div>
+              <div class="row inline"><div><span>Только этот день</span><small id="sOneDaySub">выкл. — часы кончились, следующие идут на завтра</small></div>
+                <label class="switch"><input id="sOneDay" type="checkbox" aria-label="Только этот день"><i></i></label></div>
               <div class="row inline"><div><span>Шаг</span><small>через сколько выходит следующая</small></div>
                 <div class="dts">${schStepper('sEvery', 'Шаг')}<select class="sel" id="sUnit" aria-label="Единица"><option value="hour">час</option><option value="day">дн</option></select></div></div>
             </div>
