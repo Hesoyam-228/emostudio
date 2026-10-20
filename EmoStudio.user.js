@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.9.3
+// @version      1.9.4
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -6111,6 +6111,7 @@
   const BD_BADGES = [
     // once — дарится человеку один раз (лама); тортик DA разрешает дарить сколько угодно
     { id: 'llama', n: '🦙 Лама', en: 'Give Llama badge', word: /llama|лам[аыу]/i, free: true, once: true },
+    // у тортика тоже есть предел: DA пишет «Cake fully delivered», но потом снова разрешает — поэтому его не запоминаем
     { id: 'cake', n: '🎂 Тортик', en: 'Give Cake badge', word: /\bcake\b|торт/i, free: true, once: false },
   ];
   const BD_DEF = { badges: ['llama'], custom: '', watch: true, gap: 4, skipGiven: true, show: true };
@@ -6376,7 +6377,7 @@
       const at = bdAtPoint(doc, bdRecPoint(d, give));
       if (at && b.word.test(bdLab(at))) return at;
     }
-    const verb = /\b(give|gave|send|sent|already)\b|подар|уже/i;
+    const verb = /\b(give|gave|send|sent|already|delivered)\b|подар|уже/i; // «Cake fully delivered» — тортик на сегодня всё
     const hits = [];
     for (const e of doc.body.querySelectorAll('*')) {
       if (e.children.length > 5) continue;
@@ -6391,7 +6392,7 @@
       const t = (h.textContent || '').replace(/\s+/g, ' ').trim();
       let sc = 0;
       // «Give Llama badge», «Give a Llama», «Already gave a Llama» — короткая фраза пункта меню
-      if (/^(give|send|gift|already\s+(gave|given|sent)|подарить|уже)\b.{0,24}$/i.test(t)) sc += 10;
+      if (/^(give|send|gift|already\s+(gave|given|sent)|подарить|уже)\b.{0,24}$/i.test(t) || /^\w+\s+fully\s+delivered$/i.test(t)) sc += 10;
       if (h.closest(BD_MENU_SEL)) sc += 6;
       if (h.closest(BD_TEXT_SEL)) sc -= 14;
       if (h.closest('a[href]') && !h.closest(BD_MENU_SEL)) sc -= 4;
@@ -6466,7 +6467,7 @@
     return null;
   }
   const BD_SENT_RE = /devious vibes sent|you gave .{1,40}\b(badge|llama|cake)|отправлен|подарен/i;  // окно после подарка
-  const BD_ALREADY_RE = /already (been )?(given|gave|sent|received)|already gave|can only (give|send)|only one|уже (подар|дал|отправ)|можно (подарить|дать) только/i;
+  const BD_ALREADY_RE = /already (been )?(given|gave|sent|received)|already gave|fully delivered|can only (give|send)|only one|уже (подар|дал|отправ)|можно (подарить|дать) только/i;
   const BD_POOR_RE = /not enough points|insufficient|недостаточно|не хватает/i;
   const bdPageText = (doc) => (doc.body.innerText || '').slice(0, 20000);
   // текст всплывающих окон: DA добавляет их в самый конец страницы. Весь текст профиля смотреть нельзя —
@@ -6696,7 +6697,7 @@
       </div>
       <div class="group">
         <div class="row inline"><div><span>Пауза между людьми</span><small>секунд</small></div>${schStepper('bdGap', 'Пауза, сек')}</div>
-        <div class="row inline"><div><span>Помнить, кому уже подарена лама</span><small>таких сразу пропускает; тортик дарится всегда</small></div>
+        <div class="row inline"><div><span>Помнить, кому уже подарена лама</span><small>таких сразу пропускает; тортик — каждый раз, когда DA разрешает</small></div>
           <label class="switch"><input id="bdSkip" type="checkbox" aria-label="Помнить, кому уже подарена лама"><i></i></label></div>
         <div class="row inline"><div><span>Показывать окно профиля</span><small>маленькое превью слева внизу</small></div>
           <label class="switch"><input id="bdShow" type="checkbox" aria-label="Показывать окно профиля"><i></i></label></div>
