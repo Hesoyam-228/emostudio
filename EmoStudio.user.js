@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.9.1
+// @version      1.9.2
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -5244,6 +5244,17 @@
   // ---------- подсказки сразу при ответе: нажали «Reply» — под полем три варианта, нажатие вставляет ----------
   let aiSugF = null, aiSugKey = '', aiSugList = [], aiSugSeq = 0, aiSugIv = 0, aiSugBlock = false;
   const aiSugOff = new WeakSet(); // поля, где подсказки закрыли крестиком
+  // нижний край редактора вместе с его кнопками (Cancel / Comment) — подсказки встают под ними, а не поверх
+  function aiEditorBottom(f) {
+    let bottom = f.getBoundingClientRect().bottom;
+    for (let a = f.parentElement, i = 0; a && a !== document.body && i < 9; a = a.parentElement, i++) {
+      if ([...a.querySelectorAll('[data-commentid]')].some((c) => !c.contains(f))) break;
+      const bs = [...a.querySelectorAll('button,[role="button"]')].filter((x) => !f.contains(x) && (f.compareDocumentPosition(x) & Node.DOCUMENT_POSITION_FOLLOWING)
+        && /^(cancel|reply|post|submit|send|comment|post reply|post comment)$/i.test((x.innerText || '').trim()));
+      if (bs.length) { bs.forEach((x) => { const r = x.getBoundingClientRect(); if (r.width) bottom = Math.max(bottom, r.bottom); }); break; }
+    }
+    return bottom;
+  }
   function aiSugPos() {
     const box = aiQ('#aiSug'), f = aiSugF;
     if (!box || box.hidden) return;
@@ -5252,8 +5263,8 @@
     const w = Math.min(Math.max(r.width, 320), 560, innerWidth - 16);
     box.style.width = w + 'px';
     const h = box.offsetHeight || 160;
-    let top = r.bottom + 6;
-    if (top + h > innerHeight - 8 && r.top - h - 6 > 8) top = r.top - h - 6;
+    let top = aiEditorBottom(f) + 8;
+    if (top + h > innerHeight - 8 && r.top - h - 8 > 8) top = r.top - h - 8;
     box.style.left = Math.min(Math.max(8, r.left), innerWidth - w - 8) + 'px';
     box.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + 'px';
   }
