@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.9
+// @version      1.9.1
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -4346,7 +4346,7 @@
     if (status === 0) return 'Нет связи с ' + n + ' — разрешите скрипту доступ, если Tampermonkey спрашивает';
     if (status === 404) return n + ' не знает такую модель — выберите другую в ⚙';
     if (status === 429) return ai.provider === 'gemini' ? 'Бесплатный лимит Gemini на сейчас закончился — подождите минуту' : 'Слишком много запросов или кончились деньги на балансе xAI';
-    if (status >= 500) return n + ' сейчас перегружен — попробуйте ещё раз';
+    if (status >= 500) return n + ' сейчас перегружен (все модели заняты) — подождите минуту';
     return 'Ошибка ' + n + ' ' + status + (m ? ': ' + String(m).slice(0, 120) : '');
   }
   function aiPost(url, headers, body) {
@@ -4361,10 +4361,17 @@
     });
   }
   // Gemini: если выбранная модель недоступна (нет в бесплатном лимите или переименована) — пробуем следующую
+  // модель, которая только что выручила, — первой следующие 10 минут (выбранная могла быть перегружена)
+  let aiPrefer = { model: '', until: 0 };
+  // перегружен (500/503), лимит (429), нет модели (404/400) — пробуем следующую модель; обошли все — ждём и пробуем ещё раз
+  const AI_RETRY = (st) => st === 400 || st === 404 || st === 429 || st >= 500 || st === 0;
   async function aiGemini() {
-    const ms = AI_PROVIDERS.gemini.models.map((m) => m.id), first = ai.models.gemini;
+    const ms = AI_PROVIDERS.gemini.models.map((m) => m.id), chosen = ai.models.gemini;
+    const first = aiPrefer.until > Date.now() && ms.includes(aiPrefer.model) ? aiPrefer.model : chosen;
     const order = [first, ...ms.filter((m) => m !== first)];
     let lastErr = null;
+    for (let pass = 0; pass < 2; pass++) {
+    if (pass) await sleep(1500 + Math.random() * 1500);
     for (const model of order) {
       const r = await aiPost('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', { 'x-goog-api-key': ai.keys.gemini }, {
         systemInstruction: { parts: [{ text: AI_SYSTEM }] },
@@ -4375,12 +4382,15 @@
         const cand = (r.j.candidates || [])[0];
         const txt = cand && cand.content ? (cand.content.parts || []).filter((x) => !x.thought).map((x) => x.text || '').join('\n') : '';
         const list = aiParse(txt);
-        if (list.length) return aiTop(list);
+        if (list.length) { aiPrefer = model !== chosen ? { model, until: Date.now() + 600000 } : { model: '', until: 0 }; return aiTop(list); }
         lastErr = new Error(cand && cand.finishReason === 'SAFETY' ? 'Gemini отказался писать этот текст — попробуйте другой режим' : 'Gemini вернул пустой ответ — попробуйте ещё раз');
-        break;
+        if (cand && cand.finishReason === 'SAFETY') throw lastErr;
+        continue;
       }
       lastErr = new Error(aiErr(r.status, r.j));
-      if (!(r.status === 404 || r.status === 429 || r.status === 400)) break; // ключ неверный или сбой — другие модели не помогут
+      if (r.status === 401 || r.status === 403 || (r.status === 400 && /api key|api_key/i.test(JSON.stringify(r.j || '')))) throw lastErr; // ключ неверный — другие модели не помогут
+      if (!AI_RETRY(r.status)) throw lastErr;
+    }
     }
     throw lastErr || new Error('Gemini недоступен');
   }
@@ -4400,7 +4410,7 @@
             { contents: [{ role: 'user', parts: [{ text: 'Reply with the single word: ok' }] }], generationConfig: { maxOutputTokens: 20 } });
           if (r.status >= 200 && r.status < 300) { if (model !== first) { ai.models.gemini = model; aiSave(); } res = { ok: true, msg: 'Ключ работает ✓ — тексты пишет Gemini (' + (AI_PROVIDERS.gemini.models.find((m) => m.id === model) || {}).n + ')' }; break; }
           last = r;
-          if (!(r.status === 404 || r.status === 429)) break;
+          if (!(r.status === 404 || r.status === 429 || r.status >= 500)) break;
         }
         if (!res) res = last && last.status === 429 ? { ok: true, msg: 'Ключ принят, но бесплатный лимит на эту минуту исчерпан — подождите минуту' }
           : { ok: false, msg: aiErr(last ? last.status : 0, last && last.j) };
