@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10.7
+// @version      1.10.8
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -1009,14 +1009,13 @@
     mode: 'interval',              // slots — «в заданное время», interval — «с интервалом»
     tz: 'local',                   // всегда время компьютера
     times: ['18:00'], per: 1,      // режим slots: времена и сколько картинок в один час
-    slotsDay: '',                  // режим slots: с какого дня начинать «2026-10-21»; пусто — с сегодняшнего
     every: 1, unit: 'hour',        // режим interval: шаг
     win: false, winFrom: '10:00', winTo: '22:00',
     days: [1, 1, 1, 1, 1, 1, 1],   // Пн…Вс
     order: 'dom', count: 0, skipDone: true, gap: 3,
     jump: 0, from: 1,              // перепрыгивать N картинок после каждой поставленной; начинать с картинки №
     pages: true,                   // закончив страницу Студии, переходить на следующую и продолжать
-    startAt: '',                   // своё время старта (режим interval) «2026-10-20T18:00»; пусто — ближайший целый час
+    intDay: '',                    // режим interval: день старта из календаря «2026-10-21»; пусто — сегодня
     booked: [],                    // часы, которые скрипт уже занял (чтобы новые картинки шли дальше)
     rinoDate: '',                  // вкладка RinoAkuma: «2026-10-20»; пусто — завтра
     rinoTimes: RINO_DEF.slice(),   // вкладка RinoAkuma: время по порядку — 1-я картинка, 2-я, 3-я…
@@ -1035,15 +1034,16 @@
   if (sch.unit !== 'day') sch.unit = 'hour';
   if (!Array.isArray(sch.days) || sch.days.length !== 7) sch.days = [1, 1, 1, 1, 1, 1, 1];
   if (!Array.isArray(sch.booked)) sch.booked = [];
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:00$/.test(sch.startAt || '')) sch.startAt = '';
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(sch.slotsDay || '')) sch.slotsDay = '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sch.intDay || '')) sch.intDay = '';
+  // часы «с … до …» теперь есть всегда; «выключено» раньше значило «весь день»
+  if (!sch.win) { sch.winFrom = '00:00'; sch.winTo = '23:00'; sch.win = true; }
   sch.jump = Math.max(0, sch.jump | 0); sch.from = Math.max(1, sch.from | 0);
   if (!Array.isArray(sch.rinoTimes) || !sch.rinoTimes.length || sch.rinoTimes.some((t) => !/^\d{2}:00$/.test(t))) sch.rinoTimes = RINO_DEF.slice();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sch.rinoDate || '')) sch.rinoDate = '';
   sch.rinoStart = Math.min(Math.max(0, sch.rinoStart | 0), sch.rinoTimes.length - 1);
   if (!sch.rinoBase || typeof sch.rinoBase !== 'object' || !sch.rinoBase.day || typeof sch.rinoBase.h !== 'object') sch.rinoBase = null;
   if (!['slots', 'interval', 'rino'].includes(sch.mode)) sch.mode = 'interval';
-  ['start', 'startTime', 'stagger', 'fieldTz', 'hv', 'rinoNext'].forEach((k) => { delete sch[k]; });
+  ['start', 'startTime', 'stagger', 'fieldTz', 'hv', 'rinoNext', 'startAt'].forEach((k) => { delete sch[k]; });
   const schSave = () => GM_setValue('sch', JSON.stringify(sch));
 
   // Запомненные пользователем элементы Студии (мастер «Показать поля»)
@@ -1097,10 +1097,10 @@
     const e = partsIn(Date.now() + SCH_LEAD, tz);
     return toUtc(e.y, e.mo, e.d, e.h + (e.mi || e.s ? 1 : 0), 0, tz);
   }
-  // Своё время старта (мс) или 0, если не выбрано
+  // «С интервалом»: день из календаря с часа «с» (мс) или 0, если день не выбран (тогда — сегодня)
   function startRaw(s) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})/.exec(s.startAt || '');
-    return m ? toUtc(+m[1], +m[2], +m[3], +m[4], 0, s.tz) : 0;
+    const d = pD(s.intDay);
+    return d ? toUtc(d[0], d[1], d[2], (pT(s.winFrom) || [0])[0], 0, s.tz) : 0;
   }
   // Старт расписания: выбранное время, но не раньше ближайшего целого часа (прошлое DA не примет)
   const startMs = (s) => Math.max(nextHourMs(s.tz), startRaw(s));
@@ -1152,9 +1152,7 @@
       return { plan: out, idx, warns, first: out[0], free: r.free.length, rino: r };
     }
     if (!s.days.some(Boolean)) return { plan: [], warns: ['Выберите хотя бы один день недели'] };
-    // «По времени»: с выбранного дня (полночь), но не раньше ближайшего целого часа
-    const sd = pD(s.slotsDay);
-    const first = s.mode === 'interval' ? startMs(s) : Math.max(nextHourMs(tz), sd ? toUtc(sd[0], sd[1], sd[2], 0, 0, tz) : 0);
+    const first = s.mode === 'interval' ? startMs(s) : nextHourMs(tz);
     const per = Math.max(1, s.per | 0);
     let busy = 0, lastLab = '';
     const put = (ms) => {
@@ -1186,16 +1184,15 @@
       let cur = first;
       const w0 = pT(s.winFrom) || [0, 0], w1 = pT(s.winTo) || [23, 0];
       const wf = w0[0] * 60 + w0[1], wt = w1[0] * 60 + w1[1];
-      if (s.win && wf >= wt) return { plan: [], warns: ['«Промежуток времени»: начало должно быть раньше конца'] };
+      // часы «с … до …»; если «с» позже «до» — промежуток через полночь (9 PM – 7 AM)
+      const inWin = (mins) => (wf <= wt ? mins >= wf && mins <= wt : mins >= wf || mins <= wt);
       // переносит момент в разрешённый день/часы
       const norm = (ms) => {
         for (let i = 0; i < 800; i++) {
           const p = partsIn(ms, tz), mins = p.h * 60 + p.mi;
-          if (!dayOk(p)) { ms = toUtc(p.y, p.mo, p.d + 1, s.win ? 0 : p.h, 0, tz); continue; }
-          if (s.win) {
-            if (mins < wf) return toUtc(p.y, p.mo, p.d, w0[0], 0, tz);
-            if (mins > wt) { ms = toUtc(p.y, p.mo, p.d + 1, 0, 0, tz); continue; }
-          }
+          if (!dayOk(p)) { ms = toUtc(p.y, p.mo, p.d + 1, s.win ? w0[0] : p.h, 0, tz); continue; }
+          // вне часов: ещё до начала — к началу сегодня, уже после конца — к началу завтра
+          if (s.win && !inWin(mins)) { ms = toUtc(p.y, p.mo, p.d + (mins < wf ? 0 : 1), w0[0], 0, tz); continue; }
           return ms;
         }
         return ms;
@@ -2353,7 +2350,7 @@
       wrap.value = inp.value || '18:00';
       inp.replaceWith(wrap);
     };
-    ['sWinFrom', 'sWinTo', 'sTimeNew', 'sFillFrom', 'sFillTo'].forEach((id) => upgradeTime($('#' + id)));
+    ['sWinFrom', 'sWinTo', 'sTimeNew'].forEach((id) => upgradeTime($('#' + id)));
     const upgradeSelect = (sel) => {
       const c = csMake([...sel.options].map((o) => [o.value, o.textContent]), sel.value, (v) => { sel.value = v; sel.dispatchEvent(new Event('change')); }, sel.getAttribute('aria-label'));
       sel.hidden = true; sel.before(c.btn);
@@ -2367,10 +2364,9 @@
       $('#sModeThumb').style.transform = 'translateX(' + (i * 100) + '%)';
       $('#sSlots').hidden = i !== 0; $('#sInt').hidden = i !== 1; $('#sRino').hidden = i !== 2; $('#sDaysRow').hidden = i === 2;
       $('#sModeHint').textContent = i === 2 ? 'Картинки по порядку получают время из списка: 1-я — первое время, 2-я — второе… Все в один выбранный день.'
-        : i ? 'Картинки выходят одна за другой через равный шаг — например, каждый час.'
-          : 'Картинки занимают выбранные часы в выбранный день, следующие — те же часы на следующий день, и так по кругу.';
+        : i ? 'Картинки выходят через равный шаг в выбранные часы: с выбранного дня, часы кончились — на следующий день.'
+          : 'Каждый выбранный день картинки выходят в одни и те же часы — например, в 6 PM и 9 PM.';
       if (i === 2) drawRino();
-      if (i === 0) drawSlDay();
     };
     // ---- вкладка RinoAkuma: дата, сетка «время по порядку», свой список ----
     const rnDate = $('#sRinoDate'), rnText = $('#sRinoText'), rnMsg = $('#sRinoMsg'), rnFold = $('#sRinoFold'), rnEdit = $('#sRinoEdit');
@@ -2516,34 +2512,48 @@
     bindStep('sCount', 'count', 0, 5000, 1); bindStep('sGap', 'gap', 1, 60, 1);
     bindStep('sJump', 'jump', 0, 50, 1); bindStep('sFrom', 'from', 1, 5000, 1);
 
-    // ---- старт: по умолчанию ближайший целый час, но можно выбрать свой день и час ----
-    const stBtn = $('#sStartBtn'), stFold = $('#sStartFold'), stPick = $('#sStartPick');
-    let stOpen = false;
-    function drawStartPick() {
-      const s0 = partsIn(startMs(sch), 'local'), t = partsIn(Date.now(), 'local');
-      let date = s0.y + '-' + pad2(s0.mo) + '-' + pad2(s0.d), time = pad2(s0.h) + ':00';
-      const days = [];
-      for (let i = 0; i < 120; i++) {
-        const ms = toUtc(t.y, t.mo, t.d + i, 12, 0, 'local'), q = partsIn(ms, 'local');
-        days.push([q.y + '-' + pad2(q.mo) + '-' + pad2(q.d), dayWord(ms) + ', ' + SCH_WD[q.wd].toLowerCase()]);
+    // ---- «С интервалом»: день старта — в календаре (месяц сеткой), часы — «с … до …» ----
+    const stBtn = $('#sStartBtn'), stFold = $('#sStartFold'), cal = $('#sCal');
+    const MONTHS_FULL = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+    const dayKey = (y, mo, d) => y * 400 + mo * 32 + d;
+    // выбранный день; не выбран или уже прошёл — сегодня
+    const intDay = () => { const d = pD(sch.intDay), t = quickDay(0); return d && dayKey(...d) >= dayKey(...t) ? d : t; };
+    let stOpen = false, calMon = null; // какой месяц показан: [год, месяц]
+    function drawCal() {
+      const sel = intDay(), t = quickDay(0);
+      if (!calMon) calMon = [sel[0], sel[1]];
+      const [y, mo] = calMon;
+      const lead = (new Date(Date.UTC(y, mo - 1, 1)).getUTCDay() + 6) % 7, dim = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+      let h = '<div class="cal-h"><button class="cal-nav" data-nav="-1" aria-label="Прошлый месяц"' + (y === t[0] && mo === t[1] ? ' disabled' : '') + '>‹</button>'
+        + '<b>' + MONTHS_FULL[mo - 1] + ' ' + y + '</b><button class="cal-nav" data-nav="1" aria-label="Следующий месяц">›</button></div><div class="cal-g">';
+      h += SCH_WD.map((w, i) => '<i' + (i > 4 ? ' class="we"' : '') + '>' + w + '</i>').join('') + '<span></span>'.repeat(lead);
+      for (let d = 1; d <= dim; d++) {
+        const k = dayKey(y, mo, d), wd = (lead + d - 1) % 7;
+        // день недели выключен в «Дни недели» — тусклый: картинки на него не выйдут
+        const cls = 'cal-d' + (k === dayKey(...t) ? ' today' : '') + (k === dayKey(...sel) ? ' on' : '') + (sch.days[wd] ? '' : ' off');
+        h += '<button class="' + cls + '" data-day="' + d + '"' + (k < dayKey(...t) ? ' disabled' : '') + '>' + d + '</button>';
       }
-      const pickStart = () => { sch.startAt = date + 'T' + time; schSave(); drawStartPick(); render(); };
-      const dSel = csMake(days, date, (v) => { date = v; pickStart(); }, 'День старта');
-      const hSel = csMake(Array.from({ length: 24 }, (_, i) => [pad2(i) + ':00', fmt12(i, 0)]), time, (v) => { time = v; pickStart(); }, 'Час старта');
-      const auto = document.createElement('button');
-      auto.className = 'pbtn'; auto.textContent = 'Авто'; auto.title = 'Снова брать ближайший целый час'; auto.disabled = !sch.startAt;
-      auto.onclick = () => { sch.startAt = ''; schSave(); drawStartPick(); render(); status('Старт снова с ближайшего целого часа', 'ok'); };
-      stPick.replaceChildren(dSel.btn, hSel.btn, auto);
+      cal.innerHTML = h + '</div>';
     }
     const paintStartFold = () => {
       stFold.classList.toggle('off', !stOpen); stFold.inert = !stOpen;
       stBtn.classList.toggle('open', stOpen); stBtn.setAttribute('aria-expanded', String(stOpen));
-      if (stOpen) drawStartPick(); else csClose();
+      if (stOpen) { calMon = null; drawCal(); }
     };
     stBtn.onclick = () => { stOpen = !stOpen; paintStartFold(); };
-    const winSw = $('#sWin'), winFold = $('#sWinFold');
-    const paintWin = () => { winSw.checked = !!sch.win; winFold.classList.toggle('off', !sch.win); winFold.inert = !sch.win; };
-    winSw.onchange = () => { sch.win = winSw.checked; schSave(); paintWin(); render(); };
+    cal.onclick = (e) => {
+      const nav = e.target.closest('[data-nav]');
+      if (nav) {
+        const m = calMon[1] + +nav.dataset.nav;
+        calMon = m < 1 ? [calMon[0] - 1, 12] : m > 12 ? [calMon[0] + 1, 1] : [calMon[0], m];
+        return drawCal();
+      }
+      const b = e.target.closest('[data-day]'); if (!b || b.disabled) return;
+      const d = [calMon[0], calMon[1], +b.dataset.day];
+      sch.intDay = d[0] + '-' + pad2(d[1]) + '-' + pad2(d[2]); schSave();
+      stOpen = false; paintStartFold(); render();
+      status('Дата: ' + dayStr(d) + ', ' + SCH_WD[(new Date(Date.UTC(...d.map((x, i) => (i === 1 ? x - 1 : x)))).getUTCDay() + 6) % 7].toLowerCase(), 'ok');
+    };
     const skipSw = $('#sSkip'); skipSw.checked = !!sch.skipDone; skipSw.onchange = () => { sch.skipDone = skipSw.checked; schSave(); render(); };
     const pgSw = $('#sPages'); pgSw.checked = sch.pages !== false; pgSw.onchange = () => { sch.pages = pgSw.checked; schSave(); render(); };
 
@@ -2578,34 +2588,6 @@
       const t = pT(v); $('#sTimeNew').value = pad2((t[0] + 1) % 24) + ':00';
       status('Добавлено время ' + fmt12(t[0], 0), 'ok');
     };
-    // «Заполнить подряд»: все часы с … до … (через полночь тоже: 10 PM – 2 AM)
-    $('#sFillGo').onclick = () => {
-      const a = pT($('#sFillFrom').value), b = pT($('#sFillTo').value);
-      if (!a || !b) return status('Выберите часы «с» и «до»', 'err');
-      const hs = [];
-      for (let h = a[0]; hs.length < 24; h = (h + 1) % 24) { hs.push(pad2(h) + ':00'); if (h === b[0]) break; }
-      sch.times = hs; schSave(); drawTimes(); render();
-      status('Время выхода: с ' + fmt12(a[0], 0) + ' до ' + fmt12(b[0], 0) + ' — ' + hs.length + ' ч. в день', 'ok');
-    };
-
-    // ---- «По времени»: с какого дня начинать; дальше каждый день на те же часы ----
-    const slDate = $('#sSlDate');
-    const slDay = () => pD(sch.slotsDay) || quickDay(0);
-    function drawSlDay() {
-      const d = slDay();
-      if (shadow.activeElement !== slDate) { slDate.value = dayStr(d); slDate.classList.remove('bad'); }
-      paintQuick($('#sSlQuick'), d);
-      const gone = toUtc(d[0], d[1], d[2] + 1, 0, 0, 'local') <= Date.now();
-      $('#sSlDaySub').textContent = gone ? 'этот день уже прошёл — начну с сегодняшнего' : 'дальше — те же часы на следующий день';
-    }
-    const setSlDay = (d) => { sch.slotsDay = d[0] + '-' + pad2(d[1]) + '-' + pad2(d[2]); schSave(); drawSlDay(); render(); };
-    slDate.onchange = () => {
-      const d = parseDmy(slDate.value);
-      if (!d) { slDate.classList.add('bad'); return status('Дата: день.месяц.год — например 21.10.2026', 'err'); }
-      slDate.classList.remove('bad'); setSlDay(d); status('Начну с ' + dayStr(d), 'ok');
-    };
-    slDate.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); slDate.blur(); } };
-    $('#sSlQuick').onclick = (e) => { const b = e.target.closest('[data-d]'); if (b) setSlDay(quickDay(+b.dataset.d)); };
 
     // ---- дни недели ----
     const daysBox = $('#sDays');
@@ -2679,13 +2661,13 @@
       const real = plan.slice(0, show);
       setNum($('#sN'), n || 0);
       $('#sNt').textContent = n === 1 ? 'картинка в очереди' : n > 1 && n < 5 ? 'картинки в очереди' : n ? 'картинок в очереди' : 'черновиков пока нет';
-      $('#sStart').textContent = first ? fmtNice(first) : '—';
-      const raw = startRaw(sch);
-      $('#sStartSub').textContent = !raw ? 'авто: ближайший целый час · нажмите, чтобы сменить'
-        : raw < nextHourMs('local') ? 'выбранное время уже прошло — беру ближайший час' : 'выбрано вручную · «Авто» вернёт ближайший час';
-      $('#sWinSub').textContent = sch.win
-        ? 'выходят только с ' + fmt12(pT(sch.winFrom)[0], 0) + ' до ' + fmt12(pT(sch.winTo)[0], 0) + ', остальные часы пропускаются'
-        : 'выключено — картинки выходят в любое время суток';
+      const iDay = intDay();
+      $('#sStart').textContent = dayStr(iDay);
+      $('#sStartSub').textContent = sch.mode === 'interval' && first ? 'первая — ' + fmtNice(first) + ', потом по шагу' : 'с этого дня, потом следующие';
+      const wF = pT(sch.winFrom)[0], wT = pT(sch.winTo)[0];
+      $('#sWinSub').textContent = wF === 0 && wT === 23 ? 'весь день'
+        : wF > wT ? 'через полночь: с ' + fmt12(wF, 0) + ' до ' + fmt12(wT, 0) + ' следующего дня'
+          : 'только в эти часы, после ' + fmt12(wT, 0) + ' — на следующий день';
       const step = sch.jump + 1, nums = [0, 1, 2].map((k) => sch.from + k * step).join(', ');
       $('#sJumpSub').textContent = sch.jump
         ? 'ставит на №' + nums + '…' + (sch.order === 'rev' ? ' (считая снизу)' : sch.order === 'rnd' ? ' (по перемешанному списку)' : '') + ', между ними пропускает ' + sch.jump
@@ -2719,7 +2701,7 @@
       if (rino) drawRino(); // на странице поставили или удалили картинку — сетка сразу это показывает
     }
     schState.render = render;
-    paintMode(); paintWin(); drawTimes(); pill(); paintGo(); render();
+    paintMode(); drawTimes(); pill(); paintGo(); render();
     let lastHour = 0;
     setInterval(() => {
       if (!onStudio()) { if (schState.found) { schState.found = 0; schState.page = []; render(); } return; }
@@ -3239,7 +3221,21 @@
   @keyframes slotIn{from{opacity:0;transform:translateY(8px) scale(.85)}}
   .notice{margin:0 0 10px;padding:10px 14px;border-radius:14px;background:rgba(255,159,10,.16);font-size:12px;line-height:1.35;animation:swap .4s var(--smooth)}
   .st-btn{flex:none;max-width:none;padding-right:28px}
-  .st-pick{flex-wrap:wrap;margin-top:8px}
+  .cal{width:100%}
+  .cal-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .cal-h b{font-size:13px;font-weight:700}
+  .cal-nav{width:30px;height:28px;border:0;border-radius:9px;background:var(--tile);color:var(--text);font:inherit;font-size:17px;line-height:1;cursor:pointer;transition:filter .2s}
+  .cal-nav:hover{filter:brightness(1.25)}
+  .cal-nav:disabled{opacity:.3;cursor:default;filter:none}
+  .cal-g{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+  .cal-g i{font-style:normal;font-size:10px;font-weight:600;color:var(--sub);text-align:center;padding:2px 0 4px}
+  .cal-g i.we{color:rgba(var(--a1rgb),.85)}
+  .cal-d{height:30px;border:0;border-radius:9px;background:var(--tile);color:var(--text);font:inherit;font-size:12px;font-weight:650;font-variant-numeric:tabular-nums;cursor:pointer;transition:filter .2s,background .2s,box-shadow .2s}
+  .cal-d:hover{filter:brightness(1.25)}
+  .cal-d:disabled{opacity:.28;cursor:default;filter:none}
+  .cal-d.off{opacity:.5}
+  .cal-d.today{box-shadow:inset 0 0 0 1.5px rgba(var(--a1rgb),.55)}
+  .cal-d.on{background:rgba(var(--a1rgb),.3);box-shadow:inset 0 0 0 1.5px var(--a1);opacity:1}
   .dl{color:var(--sub);font-size:12px}
   .startv{flex:none;font-weight:700;font-variant-numeric:tabular-nums;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
   .dts{display:flex;align-items:center;gap:6px;flex:none}
@@ -3711,33 +3707,22 @@
 
           <div class="group">
             <div id="sSlots">
-              <div class="row inline"><div><span>С какого дня</span><small id="sSlDaySub">потом каждый день на те же часы</small></div>
-                <input class="rn-date" id="sSlDate" placeholder="ДД.ММ.ГГГГ" inputmode="numeric" spellcheck="false" aria-label="С какого дня: день.месяц.год"></div>
-              <div class="row rn-quick" id="sSlQuick"><button class="pbtn" data-d="0">Сегодня</button><button class="pbtn" data-d="1">Завтра</button><button class="pbtn" data-d="2">Послезавтра</button></div>
               <div class="row">
                 <div class="rl"><span>Время выхода</span></div>
                 <div class="tms" id="sTimes"></div>
                 <div class="tadd"><input type="time" id="sTimeNew" value="18:00" aria-label="Новое время"><button class="pbtn" id="sTimeAdd">Добавить</button></div>
               </div>
-              <div class="row">
-                <div class="rl"><span>Заполнить подряд</span><small>все часы от и до — заменит список выше</small></div>
-                <div class="dts"><span class="dl">с</span><input type="time" id="sFillFrom" value="01:00" aria-label="С какого часа"><span class="dl">до</span><input type="time" id="sFillTo" value="09:00" aria-label="До какого часа"><button class="pbtn" id="sFillGo">Заполнить</button></div>
-              </div>
             </div>
             <div id="sInt" hidden>
-              <div class="row inline"><div><span>Начать</span><small id="sStartSub">ближайший целый час по часам компьютера</small></div>
-                <button class="cs st-btn" id="sStartBtn" aria-expanded="false" title="Выбрать свой день и час старта"><span class="startv" id="sStart">—</span></button></div>
+              <div class="row inline"><div><span>Дата</span><small id="sStartSub">с этого дня, потом следующие</small></div>
+                <button class="cs st-btn" id="sStartBtn" aria-expanded="false" title="Выбрать день в календаре"><span class="startv" id="sStart">—</span></button></div>
               <div class="fold off" id="sStartFold"><div>
-                <div class="row"><div class="rl"><span>День и час старта</span></div><div class="dts st-pick" id="sStartPick"></div></div>
+                <div class="row"><div class="cal" id="sCal"></div></div>
               </div></div>
+              <div class="row inline"><div><span>Время</span><small id="sWinSub">картинки выходят только в эти часы</small></div>
+                <div class="dts"><span class="dl">с</span><input type="time" id="sWinFrom" aria-label="С какого часа"><span class="dl">до</span><input type="time" id="sWinTo" aria-label="До какого часа"></div></div>
               <div class="row inline"><div><span>Шаг</span><small>через сколько выходит следующая</small></div>
                 <div class="dts">${schStepper('sEvery', 'Шаг')}<select class="sel" id="sUnit" aria-label="Единица"><option value="hour">час</option><option value="day">дн</option></select></div></div>
-              <div class="row inline"><div><span>Промежуток времени</span><small id="sWinSub">выключено — картинки выходят в любое время суток</small></div>
-                <label class="switch"><input id="sWin" type="checkbox" aria-label="Выходить только в промежутке времени"><i></i></label></div>
-              <div class="fold off" id="sWinFold"><div>
-                <div class="row inline"><span>Выходят</span>
-                  <div class="dts"><span class="dl">с</span><input type="time" id="sWinFrom" aria-label="С какого часа"><span class="dl">до</span><input type="time" id="sWinTo" aria-label="До какого часа"></div></div>
-              </div></div>
             </div>
             <div id="sRino" hidden>
               <div class="row inline"><div><span>Дата</span><small>день не меняется — все картинки в этот день</small></div>
