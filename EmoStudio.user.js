@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10.3
+// @version      1.10.4
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -33,7 +33,6 @@
   const JITTER = 40;          // разброс паузы, %
   const AUTO_SCROLL = true;   // докручивать ленту
   const AUTO_RESUME = true;   // продолжать после ошибки сервера
-  const RESUME_DELAY = 3;     // через сколько секунд продолжать
 
   const cfg = {
     delay: Number(GM_getValue('delay', DEFAULTS.delay)),
@@ -824,7 +823,8 @@
     return p ? p.selector : null;
   }
 
-  const AUTO_RESUME_MAX = 10; // быстрых перезапусков подряд, потом — пауза и обновление страницы
+  // ошибки лайков: одиночную пропускаем и ставим дальше; ERR_LIMIT подряд — это лимит DA, отдыхаем ~10 минут
+  const ERR_LIMIT = 5;
 
   // ---- продолжение работы после обновления страницы ----
   const RESUME_KEY = 'resumeRun';
@@ -847,6 +847,7 @@
   // лимит лайков DA: отдыхаем «около 10 минут» — каждый раз по-разному, от 8 до 13
   const limitMinutes = () => 8 + Math.random() * 5;
   const LIMIT_RE = /rate.?limit|too many|slow down|try again later|limit(ed)? (reached|exceeded)|throttl/i;
+  const SESSION_RE = /csrf|token|expired|session|login|sign.?in/i; // DA просит заново войти/обновить страницу
   // Ждёт, обновляет страницу и после загрузки продолжает с того же места (счётчики сохраняются)
   async function reloadAndResume(why, minutes, keepDry) {
     if (minutes > 0) await cooldown(minutes, why);
@@ -868,19 +869,10 @@
       startedAt = Date.now(); dry = 0;
     }
     endedAt = 0;
-    let emptyRounds = 0, failStreak = 0, unknownCount = 0, reverted = false, restarts = 0, modalHits = 0, softHits = 0;
+    let emptyRounds = 0, unknownCount = 0, reverted = false, modalHits = 0;
+    // ошибки подряд; их кнопки (после отдыха пробуем ещё раз); сколько раз подряд отдыхали, а лайки так и не пошли
+    let errStreak = 0, errBtns = [], rests = 0;
     setBtn(); updateStats(); status(rs ? 'Продолжаю после обновления страницы…' : 'Работаю…', 'run');
-
-    // true — подождали и продолжаем; false — остановились (нажали «Стоп»)
-    const resume = async (why, body) => {
-      if (++restarts > AUTO_RESUME_MAX) {
-        restarts = 0;
-        const session = /csrf|token|expired|session|login|sign.?in/i.test(body || '');
-        await reloadAndResume(AUTO_RESUME_MAX + ' перезапусков не помогли', session && !dry ? 0 : waitMinutes());
-        return false;
-      }
-      return resumeWait(why + ' [' + restarts + '/' + AUTO_RESUME_MAX + ']');
-    };
 
     while (running) {
       if (cfg.limit > 0 && stats.liked >= cfg.limit) { stop('Достигнут лимит', 'ok'); break; }
@@ -935,29 +927,32 @@
 
       const res = await doLike(btn);
       if (res.ok) {
-        stats.liked++; failStreak = 0; restarts = 0; dry = 0; softHits = 0;
+        stats.liked++; errStreak = 0; errBtns = []; rests = 0; dry = 0;
         status(res.learned ? 'Модель дообучена: сервер подтвердил лайк' : 'Работаю…', 'run');
       } else {
         if (res.revert && !reverted && btn.isConnected) { reverted = true; btn.click(); stop('Скрипт снял лайк по ошибке — вернул обратно и остановился. Перекалибруйте.', 'err'); break; }
         if (res.revert) { stats.failed++; updateStats(); stop(res.reason, 'err'); break; }
         stats.failed++; updateStats();
-        if (res.http) {
-          seen.delete(btn); // эту кнопку попробуем ещё раз
-          const body = res.resp || '';
-          // DA ответил «слишком часто» — это лимит лайков: отдыхаем ~10 минут, обновляем страницу и продолжаем
-          if (AUTO_RESUME && (res.http === 429 || LIMIT_RE.test(body))) { await reloadAndResume('Упёрся в лимит лайков DA — отдыхаю', limitMinutes(), true); break; }
-          if (!AUTO_RESUME) { stop('Сервер ответил ' + res.http + (body ? ': ' + body.slice(0, 120) : ''), 'err'); break; }
-          if (await resume('Ошибка ' + res.http + (body ? ' («' + body.slice(0, 60) + '»)' : ''), body)) continue;
-          break;
+        const body = res.resp || '';
+        const why = res.http ? 'Ошибка ' + res.http + (body ? ' («' + body.slice(0, 60) + '»)' : '') : res.reason;
+        errBtns.push(btn);
+        // одиночная ошибка — ещё не лимит: эту работу пропускаем и ставим дальше, без пауз
+        if (++errStreak < ERR_LIMIT) {
+          status(why + ' — пропускаю эту работу, ставлю дальше [' + errStreak + '/' + ERR_LIMIT + ']', 'err');
+          await sleep(pause() + 1000 + Math.random() * 2000);
+          continue;
         }
-        if (++failStreak >= 3) {
-          failStreak = 0; seen.delete(btn);
-          if (!AUTO_RESUME) { stop('3 неудачи подряд: лимит, капча или нужна перекалибровка', 'err'); break; }
-          // второй раз подряд — и ни одного лайка между ними: почти наверняка лимит DA, отдыхаем ~10 минут
-          if (++softHits >= 2) { softHits = 0; await reloadAndResume('Лайки перестали проходить — похоже на лимит DA, отдыхаю', limitMinutes(), true); break; }
-          if (await resume('3 неудачи подряд')) continue;
-          break;
-        }
+        // ERR_LIMIT ошибок подряд — это лимит лайков DA: отдыхаем 8–13 минут и продолжаем на этой же странице
+        errStreak = 0;
+        errBtns.splice(0).forEach((b) => seen.delete(b)); // эти работы попробуем ещё раз после отдыха
+        if (!AUTO_RESUME) { stop(ERR_LIMIT + ' ошибок подряд — похоже на лимит DA. ' + why, 'err'); break; }
+        // уже отдыхали, лайки так и не пошли, а DA пишет про сессию — тут поможет только обновление страницы
+        if (rests && SESSION_RE.test(body)) { rests = 0; await reloadAndResume('DA просит обновить сессию', 0, true); break; }
+        rests++;
+        await cooldown(limitMinutes(), ERR_LIMIT + ' ошибок подряд — это лимит лайков DA, отдыхаю');
+        if (!running) break;
+        status('Отдохнул — продолжаю на этой же странице…', 'run');
+        continue;
       }
       updateStats();
       await sleep(pause());
@@ -986,21 +981,6 @@
       await sleep(1000);
     }
     setProgress(null);
-  }
-
-  // Короткая пауза перед автоперезапуском — каждые RESUME_DELAY секунд
-  async function resumeWait(why) {
-    const total = RESUME_DELAY * 1000, end = Date.now() + total;
-    let shown = -1;
-    while (running && Date.now() < end) {
-      const rest = end - Date.now(), left = Math.ceil(rest / 1000);
-      if (left !== shown) { shown = left; status(why + '. Продолжу через ' + left + ' с', 'err'); }
-      setProgress(1 - rest / total);
-      await sleep(200);
-    }
-    setProgress(null);
-    if (running) status('Продолжаю работу…', 'run');
-    return running;
   }
 
   // ======================================================================
@@ -1039,6 +1019,8 @@
     booked: [],                    // часы, которые скрипт уже занял (чтобы новые картинки шли дальше)
     rinoDate: '',                  // вкладка RinoAkuma: «2026-10-20»; пусто — завтра
     rinoTimes: RINO_DEF.slice(),   // вкладка RinoAkuma: время по порядку — 1-я картинка, 2-я, 3-я…
+    rinoNext: 0,                   // вкладка RinoAkuma: сколько времён из списка уже раздано (остановили — продолжаем отсюда)
+    rinoFor: '',                   // вкладка RinoAkuma: на какой день раздавали (другой день — снова с №1)
   });
   let sch = schDefaults();
   try { const o = JSON.parse(GM_getValue('sch', 'null')); if (o && typeof o === 'object') sch = Object.assign(sch, o); } catch (e) { /* значения по умолчанию */ }
@@ -1055,6 +1037,7 @@
   sch.jump = Math.max(0, sch.jump | 0); sch.from = Math.max(1, sch.from | 0);
   if (!Array.isArray(sch.rinoTimes) || !sch.rinoTimes.length || sch.rinoTimes.some((t) => !/^\d{2}:00$/.test(t))) sch.rinoTimes = RINO_DEF.slice();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sch.rinoDate || '')) sch.rinoDate = '';
+  sch.rinoNext = Math.min(Math.max(0, sch.rinoNext | 0), sch.rinoTimes.length);
   if (!['slots', 'interval', 'rino'].includes(sch.mode)) sch.mode = 'interval';
   ['start', 'startTime', 'stagger', 'fieldTz', 'hv'].forEach((k) => { delete sch[k]; });
   const schSave = () => GM_setValue('sch', JSON.stringify(sch));
@@ -1126,13 +1109,18 @@
     const t = partsIn(Date.now(), 'local'), q = partsIn(toUtc(t.y, t.mo, t.d + 1, 12, 0, 'local'), 'local');
     return [q.y, q.mo, q.d];
   }
+  const rinoKey = (s) => rinoDay(s).join('-');
+  // номер в списке помнится только для того дня, на который раздавали: сменили дату (или «завтра» наступило) — снова с №1
+  function rinoSync() {
+    if (sch.rinoNext && sch.rinoFor !== rinoKey(sch)) { sch.rinoNext = 0; schSave(); }
+  }
   function buildPlan(n, s, taken, offset) {
     const tz = s.tz, out = [], warns = [];
     taken = taken || new Map();
     // RinoAkuma: n картинок подряд получают время из списка, начиная с offset-й; день один и тот же
     if (s.mode === 'rino') {
       const d = rinoDay(s), list = (s.rinoTimes || []).slice(offset || 0, (offset || 0) + n);
-      if (!list.length) return { plan: [], warns: ['Список времени пустой — добавьте время в «Список времени»'] };
+      if (!list.length) return { plan: [], warns: [offset ? 'Все ' + s.rinoTimes.length + ' времён из списка уже розданы — нажмите «Начать сначала»' : 'Список времени пустой — добавьте время в «Список времени»'] };
       list.forEach((t) => { const tt = pT(t); out.push(toUtc(d[0], d[1], d[2], tt[0], 0, tz)); });
       const lim = Date.now() + SCH_LEAD, past = out.filter((ms) => ms < lim);
       if (past.length) warns.push('На ' + pad2(d[2]) + '.' + pad2(d[1]) + '.' + d[0] + ' уже прошло: ' + [...new Set(past.map((ms) => fmt12(partsIn(ms, tz).h, 0)))].slice(0, 4).join(', ') + ' — DA не примет прошедшее время, выберите дату позже');
@@ -2034,7 +2022,9 @@
     if (running) return status('Сначала остановите AutoLiker', 'err');
     if (stage === 'like' || stage === 'verify') return status('Сначала закончите калибровку лайков', 'err');
     if (!onStudio()) return status('Откройте Студию (deviantart.com/studio) и нажмите снова', 'err');
-    const chk = sch.mode === 'rino' ? buildPlan(sch.rinoTimes.length, sch, null, 0) : buildPlan(1, sch, takenMap(schState.page));
+    if (sch.mode === 'rino') rinoSync();
+    if (sch.mode === 'rino' && sch.rinoNext >= sch.rinoTimes.length) return status('Все ' + sch.rinoTimes.length + ' времён из списка уже розданы — нажмите «Начать сначала»', 'err');
+    const chk = sch.mode === 'rino' ? buildPlan(sch.rinoTimes.length - sch.rinoNext, sch, null, sch.rinoNext) : buildPlan(1, sch, takenMap(schState.page));
     if (!chk.plan.length) return status(chk.warns[0] || 'Расписание пустое', 'err');
     if (chk.past) return status(chk.warns[0], 'err');
     schRunning = true; schBtnHooks.forEach((f) => f());
@@ -2045,7 +2035,7 @@
   async function schMain(limit, rs) {
     rs = rs || {};
     let pos = rs.pos || 0, page = rs.page || 1, ok = rs.ok || 0, failed = rs.failed || 0, roundedN = rs.rounded || 0, tried = rs.tried || 0;
-    let left = rs.left != null ? (rs.left < 0 ? Infinity : rs.left) : Math.min(limit || Infinity, sch.mode === 'rino' ? sch.rinoTimes.length : sch.count > 0 ? sch.count : Infinity);
+    let left = rs.left != null ? (rs.left < 0 ? Infinity : rs.left) : Math.min(limit || Infinity, sch.mode === 'rino' ? sch.rinoTimes.length - sch.rinoNext : sch.count > 0 ? sch.count : Infinity);
     let streak = 0, lastWhy = '', pageFail = false;
     for (;;) {
       status('Загружаю список картинок…' + (page > 1 ? ' (страница ' + page + ')' : ''), 'run');
@@ -2058,26 +2048,32 @@
       const todo = pickCards(cards, true, pos);
       const n = Math.min(todo.length, left);
       if (n) {
-        const { plan } = buildPlan(n, sch, takenMap(pageBooked(cards)), tried); // RinoAkuma: продолжаем список с того же места
+        const { plan } = buildPlan(n, sch, takenMap(pageBooked(cards)), sch.rinoNext); // RinoAkuma: продолжаем список с того же места
         if (plan.length < n) return schStop('Расписание вмещает только ' + plan.length + ' из ' + n + ' картинок — расширьте дни или часы', 'err');
         for (let i = 0; i < n && schRunning; i++) {
           const key = cardKey(todo[i]);
           let el = todo[i];
           if (!el.isConnected) el = (key && listCards().find((c) => cardKey(c) === key)) || null;
           let res = el ? null : { ok: false, reason: 'Картинка пропала из списка' };
+          // RinoAkuma: картинка получает следующее ещё не розданное время из списка (номер помнится между запусками)
+          const rino = sch.mode === 'rino', ri = sch.rinoNext;
+          if (rino && ri >= sch.rinoTimes.length) break;
+          const at = rino ? buildPlan(1, sch, null, ri).plan[0] : plan[i];
           for (let a = 0; el && a < 3 && schRunning; a++) {
             schState.prog = (tried + 1) + (left !== Infinity ? '/' + (tried + left) : ''); paintTitle();
-            status((page > 1 ? 'Стр. ' + page + ' · к' : 'К') + 'артинка ' + (i + 1) + ' из ' + n + ' → ' + fmtAt(plan[i], 'local') + (a ? ' (повтор ' + a + ')' : ''), 'run');
+            status((page > 1 ? 'Стр. ' + page + ' · к' : 'К') + 'артинка ' + (i + 1) + ' из ' + n + ' → ' + fmtAt(at, 'local') + (rino ? ' (время №' + (ri + 1) + ')' : '') + (a ? ' (повтор ' + a + ')' : ''), 'run');
             setProgress(i / n);
-            if (sch.mode === 'rino' && schState.rinoMark) schState.rinoMark(tried, 'now');
-            res = await schOne(el, plan[i]);
+            if (rino && schState.rinoMark) schState.rinoMark(ri, 'now');
+            res = await schOne(el, at);
             if (res.ok) break;
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
             if (a < 2 && schRunning) await sleep(4000 * (a + 1));
           }
           if (!schRunning) break;
-          if (sch.mode === 'rino' && schState.rinoMark) schState.rinoMark(tried, res && res.ok ? 'ok' : 'err');
-          tried++; left--;
+          if (rino && schState.rinoMark) schState.rinoMark(ri, res && res.ok ? 'ok' : 'err');
+          if (rino && res && res.ok) { sch.rinoNext = ri + 1; sch.rinoFor = rinoKey(sch); schSave(); } // не вышло — это время достанется следующей картинке
+          tried++;
+          if (!rino || (res && res.ok)) left--; // RinoAkuma: неудача время не тратит
           if (res && res.ok) {
             ok++; streak = 0; if (res.rounded) roundedN++;
             if (res.at) { sch.booked.push(res.at); schSave(); if (schState.render) schState.render(); }
@@ -2336,6 +2332,7 @@
     const rnMarks = {}; // номер в списке → 'now' | 'ok' | 'err' (во время работы)
     const dayStr = (d) => pad2(d[2]) + '.' + pad2(d[1]) + '.' + d[0];
     function drawRino() {
+      rinoSync();
       const d = rinoDay(sch), lim = Date.now() + SCH_LEAD;
       if (shadow.activeElement !== rnDate) { rnDate.value = dayStr(d); rnDate.classList.remove('bad'); }
       const t = partsIn(Date.now(), 'local');
@@ -2347,14 +2344,19 @@
       sch.rinoTimes.forEach((tm, i) => {
         const c = document.createElement('span');
         const ms = toUtc(d[0], d[1], d[2], +tm.slice(0, 2), 0, 'local');
-        c.className = 'rn-c' + (rnMarks[i] ? ' ' + rnMarks[i] : ms < lim ? ' past' : '');
+        const done = i < sch.rinoNext;
+        c.className = 'rn-c' + (rnMarks[i] ? ' ' + rnMarks[i] : done ? ' ok' : ms < lim ? ' past' : '') + (i === sch.rinoNext && !rnMarks[i] ? ' next' : '');
         c.style.setProperty('--i', i);
-        c.title = 'Картинка №' + (i + 1) + ' → ' + fmt12(+tm.slice(0, 2), 0) + (ms < lim && !rnMarks[i] ? ' — это время на выбранную дату уже прошло' : '');
+        c.title = 'Картинка №' + (i + 1) + ' → ' + fmt12(+tm.slice(0, 2), 0) + (done ? ' — уже поставлено' : ms < lim && !rnMarks[i] ? ' — это время на выбранную дату уже прошло' : '');
         c.innerHTML = '<i></i>'; c.firstChild.textContent = i + 1; c.append(rinoFmt(tm));
         grid.appendChild(c);
       });
-      const n = sch.rinoTimes.length;
-      $('#sRinoN').textContent = 'первые ' + n + ' ' + (n % 10 === 1 && n % 100 !== 11 ? 'картинка' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'картинки' : 'картинок') + ' · ' + dayStr(d);
+      const n = sch.rinoTimes.length, nx = sch.rinoNext;
+      $('#sRinoN').textContent = nx >= n ? 'все ' + n + ' времён розданы · ' + dayStr(d)
+        : nx ? 'продолжу с №' + (nx + 1) + ' (' + rinoFmt(sch.rinoTimes[nx]) + ') · ' + dayStr(d)
+          : 'первые ' + n + ' ' + (n % 10 === 1 && n % 100 !== 11 ? 'картинка' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'картинки' : 'картинок') + ' · ' + dayStr(d);
+      const rs = $('#sRinoRestart');
+      rs.hidden = !nx; rs.querySelector('small').textContent = 'уже поставлено ' + nx + ' из ' + n + ' — снова с №1 (' + rinoFmt(sch.rinoTimes[0]) + ')';
       if (shadow.activeElement !== rnText) rnText.value = rinoText(sch.rinoTimes);
     }
     schState.rinoMark = (i, st) => { rnMarks[i] = st; if (sch.mode === 'rino') drawRino(); };
@@ -2383,14 +2385,23 @@
         const r = rinoParse(rnText.value);
         if (r.bad.length) { rnMsg.className = 'rn-msg err'; rnMsg.textContent = 'Не понял: ' + r.bad.slice(0, 4).join(', ') + ' — пишите как 12AM, 8PM или 16'; return; }
         if (!r.times.length) { rnMsg.className = 'rn-msg err'; rnMsg.textContent = 'Список пустой'; return; }
+        if (r.times.join() !== sch.rinoTimes.join()) sch.rinoNext = 0; // новый список — раздаём с №1
         sch.rinoTimes = r.times; schSave(); drawRino(); render();
         rnMsg.className = 'rn-msg ok'; rnMsg.textContent = 'Сохранено: ' + r.times.length + ' по порядку';
       }, 400);
     };
     rnText.onblur = () => { rnText.value = rinoText(sch.rinoTimes); };
     $('#sRinoReset').onclick = () => {
+      if (RINO_DEF.join() !== sch.rinoTimes.join()) sch.rinoNext = 0;
       sch.rinoTimes = RINO_DEF.slice(); schSave(); rnText.value = rinoText(sch.rinoTimes); drawRino(); render();
       rnMsg.className = 'rn-msg ok'; rnMsg.textContent = 'Вернул стандартные 30 времён';
+    };
+    $('#sRinoRestart').onclick = () => {
+      if (schRunning) return status('Сначала остановите планировщик', 'err');
+      sch.rinoNext = 0; schSave();
+      Object.keys(rnMarks).forEach((k) => delete rnMarks[k]);
+      drawRino(); render();
+      status('Следующая картинка получит время №1 — ' + rinoFmt(sch.rinoTimes[0]), 'ok');
     };
     modeBtns.forEach((b) => { b.onclick = () => { sch.mode = b.dataset.m; schSave(); paintMode(); render(); }; });
 
@@ -2534,11 +2545,14 @@
     let lastSlots = '';
     function render() {
       if (onStudio()) schState.found = pickCards(listCards()).length;
-      const n = sch.mode === 'rino' ? Math.min(schState.found || sch.rinoTimes.length, sch.rinoTimes.length)
+      const rino = sch.mode === 'rino';
+      if (rino) rinoSync();
+      const rnLeft = sch.rinoTimes.length - sch.rinoNext; // RinoAkuma: сколько времён ещё не роздано
+      const n = rino ? Math.min(schState.found || rnLeft, rnLeft)
         : sch.count > 0 ? Math.min(sch.count, schState.found || sch.count) : schState.found;
       const taken = takenMap(schState.page);
       const show = Math.max(n, 1);
-      const { plan, warns, first } = buildPlan(sch.mode === 'rino' ? Math.max(show, Math.min(6, sch.rinoTimes.length)) : Math.max(show, 6), sch, taken, 0);
+      const { plan, warns, first } = buildPlan(rino ? Math.max(show, Math.min(6, rnLeft)) : Math.max(show, 6), sch, taken, rino ? sch.rinoNext : 0);
       const real = plan.slice(0, show);
       setNum($('#sN'), n || 0);
       $('#sNt').textContent = n === 1 ? 'картинка в очереди' : n > 1 && n < 5 ? 'картинки в очереди' : n ? 'картинок в очереди' : 'черновиков пока нет';
@@ -2555,7 +2569,8 @@
         : '0 — подряд, без пропусков';
       $('#sTz').textContent = tzShort(Date.now(), 'local');
       const rg = $('#sRange');
-      if (sch.mode === 'rino') rg.textContent = dayWord(toUtc(...rinoDay(sch), 12, 0, 'local')) + ' · по списку RinoAkuma · ' + Math.min(n || sch.rinoTimes.length, sch.rinoTimes.length) + ' из ' + sch.rinoTimes.length;
+      if (rino) rg.textContent = dayWord(toUtc(...rinoDay(sch), 12, 0, 'local')) + ' · по списку RinoAkuma · '
+        + (rnLeft ? (sch.rinoNext ? 'с №' + (sch.rinoNext + 1) + ', ' : '') + n + ' из ' + rnLeft : 'все ' + sch.rinoTimes.length + ' розданы');
       else if (real.length) rg.textContent = (n ? '' : 'Первая выйдет: ') + fmtNice(real[0]) + (real.length > 1 ? ' → ' + fmtNice(real[real.length - 1]) : '');
       else rg.textContent = 'Расписание пустое';
       // ближайшие слоты чипами
@@ -3145,6 +3160,7 @@
   .rn-c.now{box-shadow:inset 0 0 0 1.5px var(--a1);background:rgba(var(--a1rgb),.16);animation:glowR 1.2s ease-in-out infinite}
   .rn-c.ok{background:rgba(48,209,88,.2);color:var(--ok)}
   .rn-c.err{background:rgba(255,69,58,.18);color:var(--err)}
+  .rn-c.next{box-shadow:inset 0 0 0 1.5px rgba(var(--a1rgb),.75)}
   @keyframes glowR{50%{background:rgba(var(--a1rgb),.3)}}
   .rn-text{display:block;width:100%;min-height:110px;resize:vertical;padding:9px 11px;border:0;border-radius:12px;outline:none;background:var(--tile);color:var(--text);
     font:12.5px/1.55 ${FONTS.mono};box-shadow:inset 0 0 0 .5px var(--line);transition:box-shadow .25s}
@@ -3595,6 +3611,10 @@
                 <div class="rl"><span>Время по порядку</span><small id="sRinoN"></small></div>
                 <div class="rn-grid" id="sRinoGrid"></div>
               </div>
+              <button class="lrow" id="sRinoRestart" hidden>
+                <span class="ico amber"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
+                <span class="lt"><b>Начать сначала</b><small></small></span>
+              </button>
               <button class="lrow" id="sRinoEdit" aria-expanded="false">
                 <span class="ico violet"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></span>
                 <span class="lt"><b>Список времени</b><small>свой порядок через запятую: 12AM, 8AM, 4PM…</small></span>${CHEV}
