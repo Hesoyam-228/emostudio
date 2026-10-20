@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10.11
+// @version      1.10.12
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -1017,6 +1017,7 @@
     pages: true,                   // закончив страницу Студии, переходить на следующую и продолжать
     intDay: '',                    // режим interval: день старта из календаря «2026-10-21»; пусто — сегодня
     oneDay: false,                 // режим interval: только этот день — часы кончились, на завтра не переходим
+    avoidBusy: true,               // режим interval: обходить часы, где уже стоит картинка; выкл. — всегда с текущего часа
     booked: [],                    // часы, которые скрипт уже занял (чтобы новые картинки шли дальше)
     rinoDate: '',                  // вкладка RinoAkuma: «2026-10-20»; пусто — завтра
     rinoTimes: RINO_DEF.slice(),   // вкладка RinoAkuma: время по порядку — 1-я картинка, 2-я, 3-я…
@@ -1153,6 +1154,12 @@
       return { plan: out, idx, warns, first: out[0], free: r.free.length, rino: r };
     }
     if (!s.days.some(Boolean)) return { plan: [], warns: ['Выберите хотя бы один день недели'] };
+    // «Обходить занятые часы» выключено: картинки, что уже стоят в Студии, не считаем — начинаем с текущего часа.
+    // Учитываем только то, что поставил этот запуск, чтобы он сам себе не ставил по две в час
+    if (s.mode === 'interval' && s.avoidBusy === false) {
+      taken = new Map();
+      (s.booked || []).filter((t) => t > Date.now()).forEach((t) => taken.set(hk(t), (taken.get(hk(t)) || 0) + 1));
+    }
     const first = s.mode === 'interval' ? startMs(s) : nextHourMs(tz);
     const per = Math.max(1, s.per | 0);
     let busy = 0, lastLab = '';
@@ -1232,7 +1239,7 @@
         else cur += every * 3600000;
       }
     }
-    if (busy) warns.push('Пропущено занятых часов: ' + busy);
+    if (busy) warns.push('Пропущено занятых часов: ' + busy + (s.mode === 'interval' ? ' — выключите «Обходить занятые часы», чтобы начать с текущего часа' : ''));
     return { plan: out, warns, first };
   }
   // </sched-core>
@@ -2589,6 +2596,8 @@
       status('Дата: ' + dayStr(d) + ', ' + SCH_WD[(new Date(Date.UTC(...d.map((x, i) => (i === 1 ? x - 1 : x)))).getUTCDay() + 6) % 7].toLowerCase(), 'ok');
     };
     const oneSw = $('#sOneDay'); oneSw.checked = !!sch.oneDay; oneSw.onchange = () => { sch.oneDay = oneSw.checked; schSave(); render(); };
+    const busySw = $('#sBusy'); busySw.checked = sch.avoidBusy !== false;
+    busySw.onchange = () => { sch.avoidBusy = busySw.checked; schSave(); render(); };
     const skipSw = $('#sSkip'); skipSw.checked = !!sch.skipDone; skipSw.onchange = () => { sch.skipDone = skipSw.checked; schSave(); render(); };
     const pgSw = $('#sPages'); pgSw.checked = sch.pages !== false; pgSw.onchange = () => { sch.pages = pgSw.checked; schSave(); render(); };
 
@@ -2728,6 +2737,8 @@
       $('#sOneDaySub').textContent = oneDay
         ? (cap ? 'часы кончились — снова по кругу в этот же день, по 2, 3… картинки в час' : 'часы этого дня уже прошли')
         : 'выкл. — часы кончились, следующие идут на завтра';
+      $('#sBusySub').textContent = sch.avoidBusy !== false ? 'где уже стоит картинка — пропускаю'
+        : 'выкл. — с текущего часа, даже если там уже стоит картинка';
       const step = sch.jump + 1, nums = [0, 1, 2].map((k) => sch.from + k * step).join(', ');
       $('#sJumpSub').textContent = sch.jump
         ? 'ставит на №' + nums + '…' + (sch.order === 'rev' ? ' (считая снизу)' : sch.order === 'rnd' ? ' (по перемешанному списку)' : '') + ', между ними пропускает ' + sch.jump
@@ -3783,6 +3794,8 @@
                 <div class="dts"><span class="dl">с</span><input type="time" id="sWinFrom" aria-label="С какого часа"><span class="dl">до</span><input type="time" id="sWinTo" aria-label="До какого часа"></div></div>
               <div class="row inline"><div><span>Только этот день</span><small id="sOneDaySub">выкл. — часы кончились, следующие идут на завтра</small></div>
                 <label class="switch"><input id="sOneDay" type="checkbox" aria-label="Только этот день"><i></i></label></div>
+              <div class="row inline"><div><span>Обходить занятые часы</span><small id="sBusySub">где уже стоит картинка — пропускаю</small></div>
+                <label class="switch"><input id="sBusy" type="checkbox" aria-label="Обходить занятые часы"><i></i></label></div>
               <div class="row inline"><div><span>Шаг</span><small>через сколько выходит следующая</small></div>
                 <div class="dts">${schStepper('sEvery', 'Шаг')}<select class="sel" id="sUnit" aria-label="Единица"><option value="hour">час</option><option value="day">дн</option></select></div></div>
             </div>
