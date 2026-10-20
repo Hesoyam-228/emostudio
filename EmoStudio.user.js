@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10.4
+// @version      1.10.5
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -1019,8 +1019,8 @@
     booked: [],                    // часы, которые скрипт уже занял (чтобы новые картинки шли дальше)
     rinoDate: '',                  // вкладка RinoAkuma: «2026-10-20»; пусто — завтра
     rinoTimes: RINO_DEF.slice(),   // вкладка RinoAkuma: время по порядку — 1-я картинка, 2-я, 3-я…
-    rinoNext: 0,                   // вкладка RinoAkuma: сколько времён из списка уже раздано (остановили — продолжаем отсюда)
-    rinoFor: '',                   // вкладка RinoAkuma: на какой день раздавали (другой день — снова с №1)
+    rinoStart: 0,                  // вкладка RinoAkuma: с какого номера списка начинать (нажали на время в сетке)
+    rinoFor: '',                   // вкладка RinoAkuma: для какого дня выбран этот номер (другой день — снова с первого свободного)
   });
   let sch = schDefaults();
   try { const o = JSON.parse(GM_getValue('sch', 'null')); if (o && typeof o === 'object') sch = Object.assign(sch, o); } catch (e) { /* значения по умолчанию */ }
@@ -1037,9 +1037,9 @@
   sch.jump = Math.max(0, sch.jump | 0); sch.from = Math.max(1, sch.from | 0);
   if (!Array.isArray(sch.rinoTimes) || !sch.rinoTimes.length || sch.rinoTimes.some((t) => !/^\d{2}:00$/.test(t))) sch.rinoTimes = RINO_DEF.slice();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sch.rinoDate || '')) sch.rinoDate = '';
-  sch.rinoNext = Math.min(Math.max(0, sch.rinoNext | 0), sch.rinoTimes.length);
+  sch.rinoStart = Math.min(Math.max(0, sch.rinoStart | 0), sch.rinoTimes.length - 1);
   if (!['slots', 'interval', 'rino'].includes(sch.mode)) sch.mode = 'interval';
-  ['start', 'startTime', 'stagger', 'fieldTz', 'hv'].forEach((k) => { delete sch[k]; });
+  ['start', 'startTime', 'stagger', 'fieldTz', 'hv', 'rinoNext'].forEach((k) => { delete sch[k]; });
   const schSave = () => GM_setValue('sch', JSON.stringify(sch));
 
   // Запомненные пользователем элементы Студии (мастер «Показать поля»)
@@ -1110,21 +1110,32 @@
     return [q.y, q.mo, q.d];
   }
   const rinoKey = (s) => rinoDay(s).join('-');
-  // номер в списке помнится только для того дня, на который раздавали: сменили дату (или «завтра» наступило) — снова с №1
-  function rinoSync() {
-    if (sch.rinoNext && sch.rinoFor !== rinoKey(sch)) { sch.rinoNext = 0; schSave(); }
+  // Что со временами списка на выбранный день. Время занято (ok), если в Студии на этот час уже стоит картинка —
+  // видно на странице или поставил скрипт (taken: номер часа → сколько картинок). Повторы в списке (два раза 12AM)
+  // занимаются по очереди. Прошедшее (past) DA не примет — пропускаем. До выбранного номера — skip
+  function rinoSlots(s, taken) {
+    const d = rinoDay(s), lim = Date.now() + SCH_LEAD, left = new Map(taken || []);
+    const start = s.rinoFor === rinoKey(s) ? s.rinoStart | 0 : 0;
+    const slots = (s.rinoTimes || []).map((t, i) => {
+      const ms = toUtc(d[0], d[1], d[2], +t.slice(0, 2), 0, s.tz), k = hk(ms), c = left.get(k) || 0;
+      if (c > 0) { left.set(k, c - 1); return { ms, st: 'ok' }; }
+      return { ms, st: ms < lim ? 'past' : i < start ? 'skip' : 'free' };
+    });
+    const free = [];
+    slots.forEach((x, i) => { if (x.st === 'free') free.push(i); });
+    return { d, slots, free, start, done: slots.filter((x) => x.st === 'ok').length, past: slots.filter((x) => x.st === 'past') };
   }
   function buildPlan(n, s, taken, offset) {
     const tz = s.tz, out = [], warns = [];
     taken = taken || new Map();
-    // RinoAkuma: n картинок подряд получают время из списка, начиная с offset-й; день один и тот же
+    // RinoAkuma: n картинок по порядку получают свободные времена из списка; день один и тот же
     if (s.mode === 'rino') {
-      const d = rinoDay(s), list = (s.rinoTimes || []).slice(offset || 0, (offset || 0) + n);
-      if (!list.length) return { plan: [], warns: [offset ? 'Все ' + s.rinoTimes.length + ' времён из списка уже розданы — нажмите «Начать сначала»' : 'Список времени пустой — добавьте время в «Список времени»'] };
-      list.forEach((t) => { const tt = pT(t); out.push(toUtc(d[0], d[1], d[2], tt[0], 0, tz)); });
-      const lim = Date.now() + SCH_LEAD, past = out.filter((ms) => ms < lim);
-      if (past.length) warns.push('На ' + pad2(d[2]) + '.' + pad2(d[1]) + '.' + d[0] + ' уже прошло: ' + [...new Set(past.map((ms) => fmt12(partsIn(ms, tz).h, 0)))].slice(0, 4).join(', ') + ' — DA не примет прошедшее время, выберите дату позже');
-      return { plan: out, warns, first: out[0], past: past.length };
+      if (!(s.rinoTimes || []).length) return { plan: [], warns: ['Список времени пустой — добавьте время в «Список времени»'] };
+      const r = rinoSlots(s, taken), idx = r.free.slice(0, n), ds = pad2(r.d[2]) + '.' + pad2(r.d[1]) + '.' + r.d[0];
+      idx.forEach((i) => out.push(r.slots[i].ms));
+      if (!r.free.length) warns.push('На ' + ds + ' свободных времён из списка нет' + (r.done ? ' — ' + r.done + ' уже заняты картинками' : '') + (r.past.length ? (r.done ? ', ' : ' — ') + r.past.length + ' прошли' : '') + '. Выберите другую дату');
+      else if (r.past.length) warns.push('На ' + ds + ' уже прошло: ' + [...new Set(r.past.map((x) => fmt12(partsIn(x.ms, tz).h, 0)))].slice(0, 5).join(', ') + ' — эти пропускаю, начну с ' + fmt12(partsIn(out[0], tz).h, 0));
+      return { plan: out, idx, warns, first: out[0], free: r.free.length, rino: r };
     }
     if (!s.days.some(Boolean)) return { plan: [], warns: ['Выберите хотя бы один день недели'] };
     const first = s.mode === 'interval' ? startMs(s) : nextHourMs(tz);
@@ -1253,10 +1264,12 @@
 
   // Время уже запланированных картинок со страницы Студии («Oct 20, 6:00 PM»)
   const SCHED_TXT_RE = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(?:(\d{4}),?\s+)?(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*([AP])\.?M\.?/i;
+  // текст карточки с пробелами между кусками: название и время в Студии стоят вплотную («FutaOct 22, 12:00 AM»)
+  const spacedText = (el) => { const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let s = '', n; while ((n = w.nextNode())) s += ' ' + n.nodeValue; return s.replace(/\s+/g, ' '); };
   function pageBooked(cards) {
     const out = [], now = Date.now(), y0 = partsIn(now, 'local').y;
     for (const c of cards || []) {
-      const m = SCHED_TXT_RE.exec((c.textContent || '').replace(/\s+/g, ' '));
+      const m = SCHED_TXT_RE.exec(spacedText(c));
       if (!m) continue;
       const mo = MONTHS_EN.findIndex((x) => x.toLowerCase() === m[1].slice(0, 3).toLowerCase()) + 1;
       const h = (+m[4] % 12) + (m[6].toUpperCase() === 'P' ? 12 : 0), mi = +(m[5] || 0);
@@ -2022,20 +2035,31 @@
     if (running) return status('Сначала остановите AutoLiker', 'err');
     if (stage === 'like' || stage === 'verify') return status('Сначала закончите калибровку лайков', 'err');
     if (!onStudio()) return status('Откройте Студию (deviantart.com/studio) и нажмите снова', 'err');
-    if (sch.mode === 'rino') rinoSync();
-    if (sch.mode === 'rino' && sch.rinoNext >= sch.rinoTimes.length) return status('Все ' + sch.rinoTimes.length + ' времён из списка уже розданы — нажмите «Начать сначала»', 'err');
-    const chk = sch.mode === 'rino' ? buildPlan(sch.rinoTimes.length - sch.rinoNext, sch, null, sch.rinoNext) : buildPlan(1, sch, takenMap(schState.page));
+    const chk = buildPlan(1, sch, takenMap(sch.mode === 'rino' ? pageBooked(listCards()) : schState.page));
     if (!chk.plan.length) return status(chk.warns[0] || 'Расписание пустое', 'err');
-    if (chk.past) return status(chk.warns[0], 'err');
     schRunning = true; schBtnHooks.forEach((f) => f());
     try { await schMain(limit, rs); } catch (e) { schStop('Ошибка планировщика: ' + (e && e.message || e), 'err'); }
     if (schRunning) schStop('Остановлено');
+    await schTidy();
+  }
+  // остановили посреди картинки — закрываем окно DA и снимаем выделение, чтобы ничего не висело
+  async function schTidy() {
+    for (let k = 0; k < 3 && findModal(); k++) {
+      const m = findModal();
+      const x = [...m.querySelectorAll('button,[role="button"]')].find((b) => /close|закр|cancel|отмен/i.test((b.getAttribute('aria-label') || '') + ' ' + normTxt(b)));
+      if (x) schPress(x); else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await sleep(600);
+    }
+    try { await schClearSel(); } catch (e) { /* выделение снимет пользователь */ }
   }
   // limit — «только одна картинка»; rs — продолжение после перезагрузки страницы
   async function schMain(limit, rs) {
     rs = rs || {};
     let pos = rs.pos || 0, page = rs.page || 1, ok = rs.ok || 0, failed = rs.failed || 0, roundedN = rs.rounded || 0, tried = rs.tried || 0;
-    let left = rs.left != null ? (rs.left < 0 ? Infinity : rs.left) : Math.min(limit || Infinity, sch.mode === 'rino' ? sch.rinoTimes.length - sch.rinoNext : sch.count > 0 ? sch.count : Infinity);
+    const rino = sch.mode === 'rino';
+    // RinoAkuma: сколько свободных времён — столько картинок и поставим
+    const rinoFree = () => buildPlan(9999, sch, takenMap(pageBooked(listCards()))).plan.length;
+    let left = rs.left != null ? (rs.left < 0 ? Infinity : rs.left) : Math.min(limit || Infinity, rino ? rinoFree() : sch.count > 0 ? sch.count : Infinity);
     let streak = 0, lastWhy = '', pageFail = false;
     for (;;) {
       status('Загружаю список картинок…' + (page > 1 ? ' (страница ' + page + ')' : ''), 'run');
@@ -2045,20 +2069,20 @@
         if (page === 1) return schStop('Не вижу черновиков. «Дополнительно» → «Показать поля» — покажите, где картинка', 'err');
         break;
       }
-      const todo = pickCards(cards, true, pos);
-      const n = Math.min(todo.length, left);
+      const todo = pickCards(cards, true, pos), retried = new Set();
+      let n = Math.min(todo.length, left);
       if (n) {
-        const { plan } = buildPlan(n, sch, takenMap(pageBooked(cards)), sch.rinoNext); // RinoAkuma: продолжаем список с того же места
-        if (plan.length < n) return schStop('Расписание вмещает только ' + plan.length + ' из ' + n + ' картинок — расширьте дни или часы', 'err');
+        const { plan } = buildPlan(n, sch, takenMap(pageBooked(cards)));
+        if (plan.length < n && !rino) return schStop('Расписание вмещает только ' + plan.length + ' из ' + n + ' картинок — расширьте дни или часы', 'err');
         for (let i = 0; i < n && schRunning; i++) {
           const key = cardKey(todo[i]);
           let el = todo[i];
           if (!el.isConnected) el = (key && listCards().find((c) => cardKey(c) === key)) || null;
           let res = el ? null : { ok: false, reason: 'Картинка пропала из списка' };
-          // RinoAkuma: картинка получает следующее ещё не розданное время из списка (номер помнится между запусками)
-          const rino = sch.mode === 'rino', ri = sch.rinoNext;
-          if (rino && ri >= sch.rinoTimes.length) break;
-          const at = rino ? buildPlan(1, sch, null, ri).plan[0] : plan[i];
+          // RinoAkuma: картинка получает первое свободное время из списка — смотрим, что сейчас занято на странице
+          const rp = rino ? buildPlan(1, sch, takenMap(pageBooked(listCards()))) : null, ri = rp ? rp.idx[0] : -1;
+          if (rino && ri == null) { left = 0; break; }
+          const at = rino ? rp.plan[0] : plan[i];
           for (let a = 0; el && a < 3 && schRunning; a++) {
             schState.prog = (tried + 1) + (left !== Infinity ? '/' + (tried + left) : ''); paintTitle();
             status((page > 1 ? 'Стр. ' + page + ' · к' : 'К') + 'артинка ' + (i + 1) + ' из ' + n + ' → ' + fmtAt(at, 'local') + (rino ? ' (время №' + (ri + 1) + ')' : '') + (a ? ' (повтор ' + a + ')' : ''), 'run');
@@ -2070,15 +2094,19 @@
             if (a < 2 && schRunning) await sleep(4000 * (a + 1));
           }
           if (!schRunning) break;
-          if (rino && schState.rinoMark) schState.rinoMark(ri, res && res.ok ? 'ok' : 'err');
-          if (rino && res && res.ok) { sch.rinoNext = ri + 1; sch.rinoFor = rinoKey(sch); schSave(); } // не вышло — это время достанется следующей картинке
+          if (rino && schState.rinoMark) schState.rinoMark(ri, res && res.ok ? '' : 'err'); // не вышло — это время достанется следующей картинке
           tried++;
           if (!rino || (res && res.ok)) left--; // RinoAkuma: неудача время не тратит
           if (res && res.ok) {
             ok++; streak = 0; if (res.rounded) roundedN++;
+            if (retried.has(key)) failed--; // со второго захода получилось
             if (res.at) { sch.booked.push(res.at); schSave(); if (schState.render) schState.render(); }
           }
-          else { failed++; streak++; lastWhy = (res && res.reason) || ''; }
+          else {
+            failed++; streak++; lastWhy = (res && res.reason) || '';
+            // RinoAkuma: не вышло — попробуем эту картинку ещё раз в конце страницы, без времени её не бросаем
+            if (rino && el && key && !retried.has(key)) { retried.add(key); todo.push(el); n++; }
+          }
           if (streak >= 3) return schStop('3 неудачи подряд: ' + lastWhy + '. Попробуйте «Дополнительно» → «Показать поля».', 'err');
           if (i < n - 1) await sleep(Math.max(500, sch.gap * 1000 * (0.7 + Math.random() * 0.6)));
         }
@@ -2329,38 +2357,65 @@
     };
     // ---- вкладка RinoAkuma: дата, сетка «время по порядку», свой список ----
     const rnDate = $('#sRinoDate'), rnText = $('#sRinoText'), rnMsg = $('#sRinoMsg'), rnFold = $('#sRinoFold'), rnEdit = $('#sRinoEdit');
-    const rnMarks = {}; // номер в списке → 'now' | 'ok' | 'err' (во время работы)
+    // отметки запуска: номер в списке → 'now' (ставлю сейчас) | 'err' (не вышло). Только для дня rnMarkDay
+    const rnMarks = {};
+    let rnMarkDay = '';
     const dayStr = (d) => pad2(d[2]) + '.' + pad2(d[1]) + '.' + d[0];
+    // что занято — смотрим прямо на странице Студии: удалили картинку — её время снова свободно
+    const rnTaken = () => takenMap(onStudio() ? pageBooked(listCards()) : []);
+    const RN_TIP = { ok: ' — уже стоит картинка', past: ' — время прошло, пропускаю', skip: ' — пропускаю: выбран старт дальше', free: '' };
     function drawRino() {
-      rinoSync();
-      const d = rinoDay(sch), lim = Date.now() + SCH_LEAD;
+      const d = rinoDay(sch), key = rinoKey(sch);
+      if (rnMarkDay !== key) { Object.keys(rnMarks).forEach((k) => delete rnMarks[k]); rnMarkDay = key; } // другой день — старые отметки не нужны
       if (shadow.activeElement !== rnDate) { rnDate.value = dayStr(d); rnDate.classList.remove('bad'); }
       const t = partsIn(Date.now(), 'local');
       $('#sRinoQuick').querySelectorAll('[data-d]').forEach((b) => {
         const q = partsIn(toUtc(t.y, t.mo, t.d + +b.dataset.d, 12, 0, 'local'), 'local');
         b.setAttribute('aria-pressed', String(q.y === d[0] && q.mo === d[1] && q.d === d[2]));
       });
-      const grid = $('#sRinoGrid'); grid.innerHTML = '';
-      sch.rinoTimes.forEach((tm, i) => {
-        const c = document.createElement('span');
-        const ms = toUtc(d[0], d[1], d[2], +tm.slice(0, 2), 0, 'local');
-        const done = i < sch.rinoNext;
-        c.className = 'rn-c' + (rnMarks[i] ? ' ' + rnMarks[i] : done ? ' ok' : ms < lim ? ' past' : '') + (i === sch.rinoNext && !rnMarks[i] ? ' next' : '');
-        c.style.setProperty('--i', i);
-        c.title = 'Картинка №' + (i + 1) + ' → ' + fmt12(+tm.slice(0, 2), 0) + (done ? ' — уже поставлено' : ms < lim && !rnMarks[i] ? ' — это время на выбранную дату уже прошло' : '');
-        c.innerHTML = '<i></i>'; c.firstChild.textContent = i + 1; c.append(rinoFmt(tm));
-        grid.appendChild(c);
+      const r = rinoSlots(sch, rnTaken()), nx = r.free[0];
+      // сетку собираем заново, только когда поменялся список, иначе — меняем классы (плавно, без мигания)
+      const grid = $('#sRinoGrid'), gk = sch.rinoTimes.join();
+      if (grid.dataset.k !== gk) {
+        grid.innerHTML = ''; grid.dataset.k = gk;
+        sch.rinoTimes.forEach((tm, i) => {
+          const c = document.createElement('span');
+          c.dataset.i = i; c.style.setProperty('--i', i);
+          c.innerHTML = '<i></i>'; c.firstChild.textContent = i + 1; c.append(rinoFmt(tm));
+          grid.appendChild(c);
+        });
+      }
+      [...grid.children].forEach((c, i) => {
+        const s = r.slots[i], m = rnMarks[i];
+        const st = m === 'now' ? 'now' : s.st === 'ok' ? 'ok' : m === 'err' ? 'err' : s.st;
+        c.className = 'rn-c ' + st + (i === nx && st !== 'now' ? ' next' : '') + (r.start && i === r.start ? ' start' : '');
+        c.title = '№' + (i + 1) + ' → ' + fmt12(+sch.rinoTimes[i].slice(0, 2), 0)
+          + (st === 'err' ? ' — не вышло, это время получит следующая картинка' : RN_TIP[s.st] || '')
+          + (i === nx ? ' — следующая картинка получит это время' : '') + '. Нажмите, чтобы начать с этого времени';
       });
-      const n = sch.rinoTimes.length, nx = sch.rinoNext;
-      $('#sRinoN').textContent = nx >= n ? 'все ' + n + ' времён розданы · ' + dayStr(d)
-        : nx ? 'продолжу с №' + (nx + 1) + ' (' + rinoFmt(sch.rinoTimes[nx]) + ') · ' + dayStr(d)
-          : 'первые ' + n + ' ' + (n % 10 === 1 && n % 100 !== 11 ? 'картинка' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'картинки' : 'картинок') + ' · ' + dayStr(d);
+      const f = r.free.length;
+      $('#sRinoN').textContent = (f ? 'начну с №' + (nx + 1) + ' (' + rinoFmt(sch.rinoTimes[nx]) + ') · свободно ' + f : 'свободных времён нет')
+        + (r.done ? ' · уже стоит ' + r.done : '') + ' · ' + dayStr(d);
       const rs = $('#sRinoRestart');
-      rs.hidden = !nx; rs.querySelector('small').textContent = 'уже поставлено ' + nx + ' из ' + n + ' — снова с №1 (' + rinoFmt(sch.rinoTimes[0]) + ')';
+      rs.hidden = !r.start; rs.querySelector('small').textContent = 'сейчас начинаю с №' + (r.start + 1) + ' — вернуть первое свободное время';
       if (shadow.activeElement !== rnText) rnText.value = rinoText(sch.rinoTimes);
     }
-    schState.rinoMark = (i, st) => { rnMarks[i] = st; if (sch.mode === 'rino') drawRino(); };
-    schBtnHooks.push(() => { if (schRunning) Object.keys(rnMarks).forEach((k) => delete rnMarks[k]); });
+    schState.rinoMark = (i, st) => { if (st) rnMarks[i] = st; else delete rnMarks[i]; if (sch.mode === 'rino') drawRino(); };
+    // новый запуск — чистые отметки; остановили — гасим «ставлю сейчас»
+    schBtnHooks.push(() => {
+      Object.keys(rnMarks).forEach((k) => { if (schRunning || rnMarks[k] === 'now') delete rnMarks[k]; });
+      if (sch.mode === 'rino') drawRino();
+    });
+    // нажали на время в сетке — начинаем с него (нажали ещё раз — снова с первого свободного)
+    $('#sRinoGrid').onclick = (e) => {
+      const c = e.target.closest('.rn-c'); if (!c) return;
+      if (schRunning) return status('Сначала остановите планировщик', 'err');
+      const i = +c.dataset.i, same = sch.rinoFor === rinoKey(sch) && (sch.rinoStart | 0) === i;
+      sch.rinoStart = same ? 0 : i; sch.rinoFor = rinoKey(sch); schSave(); drawRino(); render();
+      const nx = rinoSlots(sch, rnTaken()).free[0];
+      if (nx == null) return status('С №' + (i + 1) + ' и дальше свободных времён нет', 'err');
+      status('Следующая картинка получит №' + (nx + 1) + ' — ' + rinoFmt(sch.rinoTimes[nx]), 'ok');
+    };
     const setRinoDate = (d) => { sch.rinoDate = d[0] + '-' + pad2(d[1]) + '-' + pad2(d[2]); schSave(); drawRino(); render(); };
     rnDate.onchange = () => {
       const m = /^\s*(\d{1,2})[.\/\-](\d{1,2})[.\/\-](\d{2,4})\s*$/.exec(rnDate.value);
@@ -2385,23 +2440,22 @@
         const r = rinoParse(rnText.value);
         if (r.bad.length) { rnMsg.className = 'rn-msg err'; rnMsg.textContent = 'Не понял: ' + r.bad.slice(0, 4).join(', ') + ' — пишите как 12AM, 8PM или 16'; return; }
         if (!r.times.length) { rnMsg.className = 'rn-msg err'; rnMsg.textContent = 'Список пустой'; return; }
-        if (r.times.join() !== sch.rinoTimes.join()) sch.rinoNext = 0; // новый список — раздаём с №1
+        if (r.times.join() !== sch.rinoTimes.join()) sch.rinoStart = 0; // новый список — с первого свободного
         sch.rinoTimes = r.times; schSave(); drawRino(); render();
         rnMsg.className = 'rn-msg ok'; rnMsg.textContent = 'Сохранено: ' + r.times.length + ' по порядку';
       }, 400);
     };
     rnText.onblur = () => { rnText.value = rinoText(sch.rinoTimes); };
     $('#sRinoReset').onclick = () => {
-      if (RINO_DEF.join() !== sch.rinoTimes.join()) sch.rinoNext = 0;
+      if (RINO_DEF.join() !== sch.rinoTimes.join()) sch.rinoStart = 0;
       sch.rinoTimes = RINO_DEF.slice(); schSave(); rnText.value = rinoText(sch.rinoTimes); drawRino(); render();
       rnMsg.className = 'rn-msg ok'; rnMsg.textContent = 'Вернул стандартные 30 времён';
     };
     $('#sRinoRestart').onclick = () => {
       if (schRunning) return status('Сначала остановите планировщик', 'err');
-      sch.rinoNext = 0; schSave();
-      Object.keys(rnMarks).forEach((k) => delete rnMarks[k]);
-      drawRino(); render();
-      status('Следующая картинка получит время №1 — ' + rinoFmt(sch.rinoTimes[0]), 'ok');
+      sch.rinoStart = 0; schSave(); drawRino(); render();
+      const nx = rinoSlots(sch, rnTaken()).free[0];
+      status(nx == null ? 'Свободных времён на эту дату нет' : 'Начну с первого свободного: №' + (nx + 1) + ' — ' + rinoFmt(sch.rinoTimes[nx]), nx == null ? 'err' : 'ok');
     };
     modeBtns.forEach((b) => { b.onclick = () => { sch.mode = b.dataset.m; schSave(); paintMode(); render(); }; });
 
@@ -2546,13 +2600,12 @@
     function render() {
       if (onStudio()) schState.found = pickCards(listCards()).length;
       const rino = sch.mode === 'rino';
-      if (rino) rinoSync();
-      const rnLeft = sch.rinoTimes.length - sch.rinoNext; // RinoAkuma: сколько времён ещё не роздано
-      const n = rino ? Math.min(schState.found || rnLeft, rnLeft)
+      const taken = rino ? rnTaken() : takenMap(schState.page);
+      const rp = rino ? buildPlan(9999, sch, taken) : null, rnFree = rp ? rp.plan.length : 0; // RinoAkuma: все свободные времена
+      const n = rino ? Math.min(schState.found || rnFree, rnFree)
         : sch.count > 0 ? Math.min(sch.count, schState.found || sch.count) : schState.found;
-      const taken = takenMap(schState.page);
       const show = Math.max(n, 1);
-      const { plan, warns, first } = buildPlan(rino ? Math.max(show, Math.min(6, rnLeft)) : Math.max(show, 6), sch, taken, rino ? sch.rinoNext : 0);
+      const { plan, warns, first } = rp || buildPlan(Math.max(show, 6), sch, taken);
       const real = plan.slice(0, show);
       setNum($('#sN'), n || 0);
       $('#sNt').textContent = n === 1 ? 'картинка в очереди' : n > 1 && n < 5 ? 'картинки в очереди' : n ? 'картинок в очереди' : 'черновиков пока нет';
@@ -2570,7 +2623,7 @@
       $('#sTz').textContent = tzShort(Date.now(), 'local');
       const rg = $('#sRange');
       if (rino) rg.textContent = dayWord(toUtc(...rinoDay(sch), 12, 0, 'local')) + ' · по списку RinoAkuma · '
-        + (rnLeft ? (sch.rinoNext ? 'с №' + (sch.rinoNext + 1) + ', ' : '') + n + ' из ' + rnLeft : 'все ' + sch.rinoTimes.length + ' розданы');
+        + (rnFree ? 'с №' + (rp.idx[0] + 1) + ', ' + n + ' из ' + rnFree + ' свободных' : 'свободных времён нет');
       else if (real.length) rg.textContent = (n ? '' : 'Первая выйдет: ') + fmtNice(real[0]) + (real.length > 1 ? ' → ' + fmtNice(real[real.length - 1]) : '');
       else rg.textContent = 'Расписание пустое';
       // ближайшие слоты чипами
@@ -2593,6 +2646,7 @@
       if (!onStudio()) notes.push('Откройте Студию (deviantart.com/studio), чтобы запустить');
       notes.push(...warns);
       $('#sNote').hidden = !notes.length; $('#sNote').textContent = notes.join(' · ');
+      if (rino) drawRino(); // на странице поставили или удалили картинку — сетка сразу это показывает
     }
     schState.render = render;
     paintMode(); paintWin(); drawTimes(); pill(); paintGo(); render();
@@ -3161,6 +3215,11 @@
   .rn-c.ok{background:rgba(48,209,88,.2);color:var(--ok)}
   .rn-c.err{background:rgba(255,69,58,.18);color:var(--err)}
   .rn-c.next{box-shadow:inset 0 0 0 1.5px rgba(var(--a1rgb),.75)}
+  .rn-c{cursor:pointer;user-select:none}
+  .rn-c:hover{filter:brightness(1.25)}
+  .rn-c.skip{opacity:.42}
+  .rn-c.start i{color:var(--a1);opacity:1;font-weight:800}
+  .rn-hint{display:block;margin-top:7px;font-size:10.5px;color:var(--sub);line-height:1.35}
   @keyframes glowR{50%{background:rgba(var(--a1rgb),.3)}}
   .rn-text{display:block;width:100%;min-height:110px;resize:vertical;padding:9px 11px;border:0;border-radius:12px;outline:none;background:var(--tile);color:var(--text);
     font:12.5px/1.55 ${FONTS.mono};box-shadow:inset 0 0 0 .5px var(--line);transition:box-shadow .25s}
@@ -3610,10 +3669,11 @@
               <div class="row">
                 <div class="rl"><span>Время по порядку</span><small id="sRinoN"></small></div>
                 <div class="rn-grid" id="sRinoGrid"></div>
+                <small class="rn-hint">зелёное — уже стоит картинка, зачёркнутое — прошло. Нажмите на время, чтобы начать с него</small>
               </div>
               <button class="lrow" id="sRinoRestart" hidden>
                 <span class="ico amber"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
-                <span class="lt"><b>Начать сначала</b><small></small></span>
+                <span class="lt"><b>С первого свободного</b><small></small></span>
               </button>
               <button class="lrow" id="sRinoEdit" aria-expanded="false">
                 <span class="ico violet"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></span>
