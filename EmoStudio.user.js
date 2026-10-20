@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10.10
+// @version      1.10.11
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -2076,6 +2076,8 @@
     if (running) return status('Сначала остановите AutoLiker', 'err');
     if (stage === 'like' || stage === 'verify') return status('Сначала закончите калибровку лайков', 'err');
     if (!onStudio()) return status('Откройте Студию (deviantart.com/studio) и нажмите снова', 'err');
+    // новый запуск — занятые часы прошлого запуска не нужны (что реально стоит, видно на странице)
+    if (!rs && sch.booked.length) { sch.booked = []; schSave(); }
     const chk = buildPlan(1, sch, takenMap(sch.mode === 'rino' ? pageBooked(listCards()) : schState.page));
     if (!chk.plan.length) return status(chk.warns[0] || 'Расписание пустое', 'err');
     schRunning = true; schBtnHooks.forEach((f) => f());
@@ -2644,6 +2646,22 @@
       if (!sch.booked.length) return status('Скрипт пока не занял ни одного часа');
       sch.booked = []; schSave(); render();
       status('Список занятых часов очищен — расписание снова начнётся с ближайшего часа', 'ok');
+    };
+    // «Сбросить настройки Студии»: первый клик только «взводит» кнопку, второй — сбрасывает всё и обновляет страницу
+    const rsAll = $('#sResetAll'), rsAllT = $('#sResetT');
+    $('#sResetS').textContent = 'все вкладки, даты, часы, подсказки полей · у вас версия ' + scriptVer();
+    let rsArm = 0;
+    rsAll.onclick = () => {
+      if (schRunning) return status('Сначала остановите планировщик', 'err');
+      if (!rsArm) {
+        rsAll.classList.add('arm'); rsAllT.textContent = 'Нажмите ещё раз — сброшу всё';
+        rsArm = setTimeout(() => { rsArm = 0; rsAll.classList.remove('arm'); rsAllT.textContent = 'Сбросить настройки Студии'; }, 3000);
+        return;
+      }
+      clearTimeout(rsArm); rsArm = 0;
+      GM_setValue('sch', JSON.stringify(schDefaults())); GM_setValue('schSel', '{}'); GM_setValue('schResume', '');
+      status('Настройки Студии сброшены — обновляю страницу…', 'ok');
+      setTimeout(() => location.reload(), 700);
     };
 
     // мастер «Показать поля» — одна строка вместо пяти
@@ -3834,6 +3852,10 @@
                 <span class="ico violet"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></span>
                 <span class="lt"><b>Занятые часы</b><small>только пока идёт планирование</small></span><span class="val" id="sBooked">нет</span>
               </button>
+              <button class="lrow" id="sResetAll" title="Вернуть все настройки Студии как после установки">
+                <span class="ico red"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
+                <span class="lt"><b id="sResetT">Сбросить настройки Студии</b><small id="sResetS">все вкладки, даты, часы, подсказки полей</small></span>
+              </button>
             </div></div>
           </div>
         </section>
@@ -4293,6 +4315,9 @@
 
     // ---- работа шла до обновления страницы — продолжаем сами ----
     const srs = takeSchResume();
+    // запуск оборвался не через «Стоп» (вкладку закрыли, Edge её усыпил) — забываем занятые им часы,
+    // иначе следующий запуск продолжит «с последнего» и сдвинет всё расписание
+    if (!srs && sch.booked.length) { sch.booked = []; schSave(); if (schState.render) schState.render(); }
     if (srs && onStudio()) {
       status('Продолжаю планирование: страница ' + srs.page + '…', 'run');
       sleep(3500).then(() => { if (!running && !schRunning && onStudio()) schRun(0, srs); });
