@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10.9
+// @version      1.10.10
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -1198,23 +1198,38 @@
         }
         return ms;
       };
-      // «Только этот день»: выбранный день до часа «до» (через полночь — до утра следующего дня); дальше не идём
-      let dayEnd = Infinity;
       if (s.oneDay) {
+        // «Только этот день»: часы выбранного дня (через полночь — до утра следующего дня), на завтра не идём.
+        // Все часы заняты — второй круг в тот же день: ещё по картинке на каждый час, потом третий…
         const p = partsIn(first, tz), m0 = p.h * 60 + p.mi;
-        dayEnd = !s.win ? toUtc(p.y, p.mo, p.d, 23, 0, tz)
+        const dayEnd = !s.win ? toUtc(p.y, p.mo, p.d, 23, 0, tz)
           : toUtc(p.y, p.mo, p.d + (wf > wt && m0 > wt ? 1 : 0), w1[0], w1[1], tz);
+        const hours = [];
+        for (let g = 0; g < 500; g++) {
+          cur = norm(cur);
+          if (cur > dayEnd) break;
+          if (!hours.length || hk(hours[hours.length - 1]) !== hk(cur)) hours.push(cur);
+          if (s.unit === 'day') break; // шаг в днях — в одном дне только один час
+          cur += every * 3600000;
+        }
+        if (!hours.length) {
+          warns.push('На ' + pad2(p.d) + '.' + pad2(p.mo) + '.' + p.y + (s.win ? ' часы с ' + fmt12(w0[0], 0) + ' до ' + fmt12(w1[0], 0) : ' все часы') + ' уже прошли — выберите другой день');
+        }
+        const have = new Map(hours.map((ms) => [hk(ms), taken.get(hk(ms)) || 0])); // сколько картинок уже на часе
+        for (let r = 1; out.length < n && hours.length && r <= 30; r++) {
+          for (const ms of hours) {
+            const k = hk(ms);
+            while (have.get(k) < per * r && out.length < n) { out.push(ms); have.set(k, have.get(k) + 1); }
+            if (out.length >= n) break;
+          }
+        }
+        return { plan: out, warns, first, hours: hours.length };
       }
       for (let g = 0; out.length < n && g < 20000; g++) {
         cur = norm(cur);
-        if (cur > dayEnd) break;
         put(cur);
         if (s.unit === 'day') { const p = partsIn(cur, tz); cur = toUtc(p.y, p.mo, p.d + every, p.h, 0, tz); }
         else cur += every * 3600000;
-      }
-      if (s.oneDay && !out.length) {
-        const p = partsIn(first, tz);
-        warns.push('На ' + pad2(p.d) + '.' + pad2(p.mo) + '.' + p.y + ' свободных часов' + (s.win ? ' с ' + fmt12(w0[0], 0) + ' до ' + fmt12(w1[0], 0) : '') + ' не осталось — выберите другой день');
       }
     }
     if (busy) warns.push('Пропущено занятых часов: ' + busy);
@@ -2691,9 +2706,9 @@
       const wF = pT(sch.winFrom)[0], wT = pT(sch.winTo)[0];
       $('#sWinSub').textContent = wF === 0 && wT === 23 ? 'весь день'
         : wF > wT ? 'через полночь: с ' + fmt12(wF, 0) + ' до ' + fmt12(wT, 0) + ' следующего дня'
-          : oneDay ? 'только в эти часы этого дня' : 'только в эти часы, после ' + fmt12(wT, 0) + ' — на следующий день';
+          : oneDay ? 'только в эти часы этого дня, по кругу' : 'только в эти часы, после ' + fmt12(wT, 0) + ' — на следующий день';
       $('#sOneDaySub').textContent = oneDay
-        ? (cap ? 'помещается ' + cap + (schState.found > cap ? ' из ' + schState.found + ' — остальные останутся без времени' : '') : 'свободных часов в этот день нет')
+        ? (cap ? 'часы кончились — снова по кругу в этот же день, по 2, 3… картинки в час' : 'часы этого дня уже прошли')
         : 'выкл. — часы кончились, следующие идут на завтра';
       const step = sch.jump + 1, nums = [0, 1, 2].map((k) => sch.from + k * step).join(', ');
       $('#sJumpSub').textContent = sch.jump
