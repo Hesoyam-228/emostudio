@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.10.12
+// @version      1.13.0
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -962,6 +962,9 @@
   function stop(msg, kind) {
     running = false; endedAt = Date.now(); keepAwake(false);
     GM_setValue(RESUME_KEY, 'null');
+    // запуск «по расписанию» остановился раньше срока (кнопкой, лимитом, ошибкой) — до конца этих часов сам не стартуем
+    const schEnd = +GM_getValue('lkSchRun', 0);
+    if (schEnd) { if (Date.now() < schEnd) GM_setValue('lkSchSkip', schEnd); GM_setValue('lkSchRun', 0); }
     setProgress(null); setBtn();
     const sum = stats.liked + stats.skipped + stats.unsure + stats.failed
       ? ` Лайков ${stats.liked}, пропущено ${stats.skipped}, неясно ${stats.unsure}.` : '';
@@ -2394,7 +2397,7 @@
     ['sWinFrom', 'sWinTo', 'sTimeNew'].forEach((id) => upgradeTime($('#' + id)));
     const upgradeSelect = (sel) => {
       const c = csMake([...sel.options].map((o) => [o.value, o.textContent]), sel.value, (v) => { sel.value = v; sel.dispatchEvent(new Event('change')); }, sel.getAttribute('aria-label'));
-      sel.hidden = true; sel.before(c.btn);
+      sel.hidden = true; sel.before(c.btn); sel._cs = c; // пресеты меняют значение программно
     };
 
     // ---- режим ----
@@ -2404,6 +2407,9 @@
       modeBtns.forEach((b, n) => b.setAttribute('aria-selected', String(n === i)));
       $('#sModeThumb').style.transform = 'translateX(' + (i * 100) + '%)';
       $('#sSlots').hidden = i !== 0; $('#sInt').hidden = i !== 1; $('#sRino').hidden = i !== 2; $('#sDaysRow').hidden = i === 2;
+      // страница «Настройки»: свои строки у каждого режима
+      $('#sIntMore').hidden = i !== 1; $('#sRinoMore').hidden = i !== 2; $('#sPerRow').hidden = i === 2;
+      $('#sSetModeH').textContent = 'Расписание · ' + modeBtns[i].textContent;
       $('#sModeHint').textContent = i === 2 ? 'Картинки по порядку получают время из списка: 1-я — первое время, 2-я — второе… Все в один выбранный день.'
         : i ? 'Картинки выходят через равный шаг в выбранные часы: с выбранного дня, часы кончились — на следующий день.'
           : 'Каждый выбранный день картинки выходят в одни и те же часы — например, в 6 PM и 9 PM.';
@@ -2560,13 +2566,16 @@
     // выбранный день; не выбран или уже прошёл — сегодня
     const intDay = () => { const d = pD(sch.intDay), t = quickDay(0); return d && dayKey(...d) >= dayKey(...t) ? d : t; };
     let stOpen = false, calMon = null; // какой месяц показан: [год, месяц]
-    function drawCal() {
+    const CAL_L = '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>', CAL_R = '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+    // dir: 1 — листаем вперёд (сетка въезжает справа), -1 — назад (слева)
+    function drawCal(dir) {
       const sel = intDay(), t = quickDay(0);
       if (!calMon) calMon = [sel[0], sel[1]];
       const [y, mo] = calMon;
       const lead = (new Date(Date.UTC(y, mo - 1, 1)).getUTCDay() + 6) % 7, dim = new Date(Date.UTC(y, mo, 0)).getUTCDate();
-      let h = '<div class="cal-h"><button class="cal-nav" data-nav="-1" aria-label="Прошлый месяц"' + (y === t[0] && mo === t[1] ? ' disabled' : '') + '>‹</button>'
-        + '<b>' + MONTHS_FULL[mo - 1] + ' ' + y + '</b><button class="cal-nav" data-nav="1" aria-label="Следующий месяц">›</button></div><div class="cal-g">';
+      let h = '<div class="cal-h"><button class="cal-nav" data-nav="-1" aria-label="Прошлый месяц"' + (y === t[0] && mo === t[1] ? ' disabled' : '') + '>' + CAL_L + '</button>'
+        + '<b>' + MONTHS_FULL[mo - 1] + ' ' + y + '</b><button class="cal-nav" data-nav="1" aria-label="Следующий месяц">' + CAL_R + '</button></div>'
+        + '<div class="cal-g' + (dir > 0 ? ' nx' : dir < 0 ? ' pv' : '') + '">';
       h += SCH_WD.map((w, i) => '<i' + (i > 4 ? ' class="we"' : '') + '>' + w + '</i>').join('') + '<span></span>'.repeat(lead);
       for (let d = 1; d <= dim; d++) {
         const k = dayKey(y, mo, d), wd = (lead + d - 1) % 7;
@@ -2587,7 +2596,7 @@
       if (nav) {
         const m = calMon[1] + +nav.dataset.nav;
         calMon = m < 1 ? [calMon[0] - 1, 12] : m > 12 ? [calMon[0] + 1, 1] : [calMon[0], m];
-        return drawCal();
+        return drawCal(+nav.dataset.nav);
       }
       const b = e.target.closest('[data-day]'); if (!b || b.disabled) return;
       const d = [calMon[0], calMon[1], +b.dataset.day];
@@ -2642,13 +2651,103 @@
       paint(); daysBox.appendChild(b);
     });
 
-    // ---- «дополнительно» ----
-    const advFold = $('#sAdv'), advBtn = $('#sAdvBtn');
-    const paintAdv = (open) => { advFold.classList.toggle('off', !open); advFold.inert = !open; advBtn.classList.toggle('open', open); advBtn.setAttribute('aria-expanded', String(open)); };
-    let advOpen = false; paintAdv(false);
-    advBtn.onclick = () => { advOpen = !advOpen; paintAdv(advOpen); };
+    // ---- пресеты: сохранённые наборы настроек расписания, переключаются одним нажатием ----
+    // дата и «ставлю сейчас» в пресет не входят — их выбирают каждый раз
+    const PRESET_KEYS = ['mode', 'times', 'per', 'every', 'unit', 'win', 'winFrom', 'winTo', 'days', 'order', 'count', 'skipDone', 'gap', 'jump', 'from', 'pages', 'oneDay', 'avoidBusy', 'rinoTimes'];
+    let presets = [];
+    try { presets = JSON.parse(GM_getValue('schPresets', '[]')) || []; } catch (e) { presets = []; }
+    if (!Array.isArray(presets)) presets = [];
+    presets = presets.filter((p) => p && p.data && typeof p.name === 'string');
+    const presetsSave = () => GM_setValue('schPresets', JSON.stringify(presets));
+    const pickSch = () => {
+      const o = {};
+      PRESET_KEYS.forEach((k) => { o[k] = JSON.parse(JSON.stringify(sch[k] === undefined ? null : sch[k])); });
+      o.times = [...o.times].sort();
+      return o;
+    };
+    const sameSch = (d) => JSON.stringify(PRESET_KEYS.map((k) => (k === 'times' ? [...(d.times || [])].sort() : d[k] === undefined ? null : d[k]))) === JSON.stringify(PRESET_KEYS.map((k) => pickSch()[k]));
+    // название по умолчанию — из самих настроек
+    const presetAuto = () => {
+      const h = (t) => fmt12(+String(t).slice(0, 2), 0);
+      if (sch.mode === 'rino') return 'RinoAkuma · ' + sch.rinoTimes.length + ' времён';
+      if (sch.mode === 'slots') { const t = [...sch.times].sort(); return t.length > 3 ? 'По времени · ' + t.length + ' ч, с ' + h(t[0]) : 'По времени · ' + t.map(h).join(', '); }
+      const all = sch.winFrom === '00:00' && sch.winTo === '23:00';
+      return (all ? 'Весь день' : h(sch.winFrom) + '–' + h(sch.winTo)) + ' · шаг ' + sch.every + (sch.unit === 'day' ? ' дн' : ' ч') + (sch.oneDay ? ' · 1 день' : '');
+    };
+    // после пресета (или сброса) все поля Студии показывают то, что сейчас в настройках
+    function syncSch() {
+      [['sUnit', 'unit'], ['sOrder', 'order']].forEach(([id, k]) => { const e = $('#' + id); e.value = sch[k]; if (e._cs) e._cs.set(e.value); });
+      $('#sWinFrom').value = sch.winFrom; $('#sWinTo').value = sch.winTo;
+      [['sPer', 'per'], ['sEvery', 'every'], ['sCount', 'count'], ['sGap', 'gap'], ['sJump', 'jump'], ['sFrom', 'from']].forEach(([id, k]) => { $('#' + id).value = sch[k]; });
+      oneSw.checked = !!sch.oneDay; busySw.checked = sch.avoidBusy !== false; skipSw.checked = !!sch.skipDone; pgSw.checked = sch.pages !== false;
+      [...daysBox.children].forEach((b, i) => b.setAttribute('aria-pressed', String(!!sch.days[i])));
+      drawTimes(); paintMode(); render();
+    }
+    function applyPreset(p) {
+      if (schRunning) return status('Сначала остановите планировщик', 'err');
+      Object.assign(sch, JSON.parse(JSON.stringify(p.data)));
+      sch.rinoStart = 0; schSave(); syncSch();
+      status('Пресет «' + p.name + '» включён', 'ok');
+    }
+    function addPreset() {
+      const ex = presets.find((p) => sameSch(p.data));
+      if (ex) return status('Такие настройки уже сохранены — «' + ex.name + '»', 'ok');
+      let name = presetAuto(), k = 2;
+      while (presets.some((p) => p.name === name)) name = presetAuto() + ' (' + k++ + ')';
+      presets.push({ id: Date.now().toString(36), name, data: pickSch() });
+      presetsSave(); drawPresetList(); render();
+      status('Сохранил пресет «' + name + '» — переименовать можно в «Настройки» → «Пресеты»', 'ok');
+    }
+    // чипы на главной: нажали — применили; «+» — сохранить текущие настройки
+    let preKey = '';
+    function paintPresets() {
+      const box = $('#sPresets'), on = presets.findIndex((p) => sameSch(p.data));
+      const key = presets.map((p) => p.id + p.name).join('|') + '#' + on;
+      if (key === preKey) return;
+      preKey = key; box.innerHTML = '';
+      presets.forEach((p, i) => {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'pchip' + (i === on ? ' on' : '');
+        b.style.setProperty('--i', i); b.textContent = p.name; b.title = 'Включить пресет «' + p.name + '»';
+        b.onclick = () => applyPreset(p);
+        box.appendChild(b);
+      });
+      if (on < 0) {
+        const a = document.createElement('button'); a.type = 'button'; a.className = 'pchip add'; a.style.setProperty('--i', presets.length);
+        a.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span></span>';
+        a.lastChild.textContent = presets.length ? 'Сохранить' : 'Сохранить как пресет';
+        a.title = 'Запомнить текущие настройки расписания'; a.onclick = addPreset;
+        box.appendChild(a);
+      }
+    }
+    // «Настройки» → «Пресеты»: переименовать, перезаписать текущими, удалить (со второго нажатия)
+    function drawPresetList() {
+      const box = $('#sPresetList'); box.innerHTML = '';
+      $('#sPresetEmpty').hidden = presets.length > 0;
+      presets.forEach((p) => {
+        const r = document.createElement('div'); r.className = 'row pre-r';
+        r.innerHTML = '<input class="pname" maxlength="40" spellcheck="false" aria-label="Название пресета">'
+          + '<button class="pbtn" type="button" title="Записать в пресет текущие настройки">Обновить</button>'
+          + '<button class="pdel" type="button" aria-label="Удалить пресет"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>';
+        const [inp, upd, del] = r.children;
+        inp.value = p.name;
+        inp.onchange = () => { const v = inp.value.trim(); if (!v) { inp.value = p.name; return; } p.name = v; presetsSave(); render(); status('Пресет переименован: «' + v + '»', 'ok'); };
+        inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } };
+        upd.onclick = () => { p.data = pickSch(); presetsSave(); render(); status('В пресет «' + p.name + '» записаны текущие настройки', 'ok'); };
+        let arm = 0;
+        del.onclick = () => {
+          if (!arm) { del.classList.add('arm'); del.title = 'Нажмите ещё раз — удалю'; arm = setTimeout(() => { arm = 0; del.classList.remove('arm'); }, 3000); return; }
+          clearTimeout(arm); presets = presets.filter((x) => x !== p); presetsSave(); drawPresetList(); render();
+          status('Пресет «' + p.name + '» удалён', 'ok');
+        };
+        box.appendChild(r);
+      });
+    }
+    $('#sPresetAdd').onclick = addPreset;
+    drawPresetList();
+
     // свернули панель в капсулу и развернули — все раскрывашки снова закрыты
-    schState.resetView = () => { advOpen = false; paintAdv(false); stOpen = false; paintStartFold(); };
+    // (страница «Настройки Студии» открывается кнопкой «Настройки» — её листает initUI)
+    schState.resetView = () => { stOpen = false; paintStartFold(); };
 
     // занятые часы
     $('#sBookedRow').onclick = () => {
@@ -2724,7 +2823,8 @@
       const real = plan.slice(0, show);
       setNum($('#sN'), n || 0);
       $('#sNt').textContent = n === 1 ? 'картинка в очереди' : n > 1 && n < 5 ? 'картинки в очереди' : n ? 'картинок в очереди'
-        : schState.found ? 'некуда ставить — нет свободных часов' : 'черновиков пока нет';
+        : schState.found ? 'некуда ставить — нет свободных часов'
+          : onStudio() && listCards().length ? 'все черновики уже с временем' : 'черновиков пока нет';
       const iDay = intDay();
       $('#sStart').textContent = dayStr(iDay);
       // первая — с учётом уже занятых часов
@@ -2765,11 +2865,27 @@
       }
       const bn = sch.booked.length;
       $('#sBooked').textContent = bn ? String(bn) : 'нет';
+      // под кнопкой «Настройки» — что сейчас изменено, чтобы не искать
+      const set = [];
+      if (sch.mode === 'interval') { if (sch.oneDay) set.push('только этот день'); if (sch.avoidBusy === false) set.push('с текущего часа'); }
+      if (!rino) {
+        const on = SCH_WD.filter((_, k) => sch.days[k]);
+        if (on.length < 7) set.push(on.length ? on.join(', ') : 'нет дней');
+        if (sch.per > 1) set.push('по ' + sch.per + ' в час');
+      }
+      if (sch.order !== 'dom') set.push(sch.order === 'rev' ? 'снизу вверх' : 'случайно');
+      if (sch.from > 1) set.push('с картинки №' + sch.from);
+      if (sch.jump) set.push('перепрыгивать ' + sch.jump);
+      if (sch.count > 0) set.push('всего ' + sch.count);
+      if (!sch.skipDone) set.push('и запланированные');
+      if (sch.pages === false) set.push('одна страница');
+      $('#sSetSub').textContent = set.length ? set.join(' · ') : 'дни недели, какие картинки, сколько, проверка';
       const notes = [];
       if (!onStudio()) notes.push('Откройте Студию (deviantart.com/studio), чтобы запустить');
       notes.push(...warns);
       $('#sNote').hidden = !notes.length; $('#sNote').textContent = notes.join(' · ');
       if (rino) drawRino(); // на странице поставили или удалили картинку — сетка сразу это показывает
+      try { paintPresets(); } catch (e) { /* пресеты ещё не готовы (первый рисунок) */ }
     }
     schState.render = render;
     paintMode(); drawTimes(); pill(); paintGo(); render();
@@ -3208,6 +3324,7 @@
   .row{padding:10px 14px}
   .row+.row,.fold .row,.row+div>.row,div+.row{border-top:.5px solid var(--line)}
   .group>.row:first-child,.group>div:first-child>.row:first-child{border-top:0}
+  #sSetSched>[hidden]+[hidden]+.row{border-top:0}
   .row.inline{display:flex;align-items:center;justify-content:space-between;gap:10px}
   .rl{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
   output{color:var(--sub);font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -3644,6 +3761,100 @@
   .fx canvas{position:absolute;inset:0;opacity:.72;-webkit-mask-image:linear-gradient(transparent,#000 12%,#000 88%,transparent);mask-image:linear-gradient(transparent,#000 12%,#000 88%,transparent)}
   .panel[data-theme=light] .fx canvas{opacity:.4}
 
+  /* =========== полировка в духе Apple: настоящие пружины, отклик на нажатие, мягкие раскрытия =========== */
+  .panel{--bounce:var(--spring);transition:width .6s var(--smooth),border-radius .6s var(--smooth),transform .45s var(--spring),box-shadow .5s,background-color .5s,color .4s;
+    font-optical-sizing:auto;text-rendering:optimizeLegibility}
+  /* пружины как в iOS (затухающие колебания): мягкая — для движения, упругая — для «прыжков» */
+  @supports (transition-timing-function:linear(0,1)){
+    .panel{--spring:linear(0,.035,.121,.233,.354,.473,.583,.68,.762,.829,.883,.925,.956,.979,.994,1.005,1.011,1.014,1.015,1.015,1.014,1.012,1.01,1.008,1.007,1.005,1.004,1.003,1.002,1.001,1);
+      --bounce:linear(0,.047,.161,.31,.47,.623,.757,.868,.954,1.015,1.054,1.076,1.083,1.081,1.073,1.061,1.047,1.034,1.023,1.013,1.005,1,.996,.994,.993,.993,.994,.995,.996,.997,.998,.999,.999,1,1)}
+  }
+  /* у Apple нет «волны» от нажатия — вместо неё подсветка и лёгкое сжатие */
+  .rip{display:none!important}
+  /* нажатие: быстро вниз, отпустили — пружиной обратно */
+  :is(.go,.pbtn,.hbtn,.cs,.day,.tm,.ch,.cal-d,.cal-nav,.rn-c,.stepper button,.ai-cp,.opt,.lrow,.seg button):active{transition-duration:.1s!important}
+  .go:active{transform:scale(.965);filter:brightness(.94)}
+  .pbtn:active{transform:scale(.94);background:var(--track)}
+  .lrow:active{background:var(--track)}
+  .lrow:not(.open):hover .chev{transform:translateX(2px)}
+  .opt:active{background:var(--track)}
+  .tm:active{transform:scale(.94)}
+  .day{transition:color .3s,background .3s,transform .45s var(--bounce),box-shadow .3s}
+  .day[aria-pressed=true]{animation:dayOn .45s var(--bounce)}
+  @keyframes dayOn{40%{transform:scale(1.08)}}
+  /* переключатель вкладок: ползунок чуть сжимается под пальцем, подпись приглушается */
+  .seg i{transition:transform .6s var(--spring),scale .35s var(--spring),background .3s}
+  .seg:has(button:active) i{scale:.965}
+  .seg button{transition:color .25s,opacity .2s}
+  .seg button:active{opacity:.6}
+  /* тумблер: тень ручки как в iOS, фон перетекает мягко */
+  .switch i,.tg{transition:background .35s var(--smooth),box-shadow .35s}
+  .switch i::after,.tg::after{box-shadow:0 3px 8px rgba(0,0,0,.15),0 3px 1px rgba(0,0,0,.06),0 0 0 .5px rgba(0,0,0,.04)}
+  /* раскрывашки: содержимое мягко выезжает сверху, а не просто появляется */
+  .fold>div>*{transition:transform .55s var(--spring),opacity .4s var(--smooth),background .25s}
+  .fold.off>div>*{transform:translateY(-8px);opacity:0}
+  /* прокрутка внутри окна не утаскивает страницу DA */
+  .clip,.ai-b,.pop{overscroll-behavior:contain}
+  /* выпадающие списки — пружинкой из-под кнопки */
+  .pop{animation:popin .42s var(--spring)}
+  @keyframes popin{from{opacity:0;transform:translateY(-6px) scale(.94)}to{opacity:1;transform:none}}
+  .opt{transition:background .2s}
+  /* календарь: круглые стрелки, листание месяца, «прыжок» выбранного дня */
+  .cal-nav{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;transition:background .25s,transform .45s var(--bounce),opacity .25s}
+  .cal-nav:not(:disabled):hover{background:var(--track);filter:none}
+  .cal-nav:not(:disabled):active{transform:scale(.86)}
+  .cal-nav svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+  .cal-h b{animation:swap .4s var(--smooth)}
+  .cal-g{animation:calIn .5s var(--spring)}
+  .cal-g.nx{animation-name:calNx}.cal-g.pv{animation-name:calPv}
+  @keyframes calIn{from{opacity:0;transform:translateY(6px)}}
+  @keyframes calNx{from{opacity:0;transform:translateX(26px)}}
+  @keyframes calPv{from{opacity:0;transform:translateX(-26px)}}
+  .cal-d{transition:background .25s,color .25s,box-shadow .25s,transform .45s var(--bounce),opacity .25s}
+  .cal-d:not(:disabled):not(.on):hover{background:var(--track);filter:none}
+  .cal-d:not(:disabled):active{transform:scale(.88)}
+  .cal-d.today:not(.on){color:var(--a1l)}
+  .panel[data-theme=light] .cal-d.today:not(.on){color:var(--a1)}
+  .cal-d.on{background:var(--grad);color:#fff;box-shadow:0 3px 10px rgba(var(--amrgb),.35);animation:dayOn .45s var(--bounce)}
+  /* сетка RinoAkuma: мягкая подсветка и нажатие */
+  .rn-c{transition:background .3s,color .3s,box-shadow .3s,opacity .3s,transform .45s var(--bounce),filter .2s}
+  .rn-c:hover{filter:brightness(1.12)}
+  .rn-c:active{transform:scale(.9)}
+  /* строки и кнопки чуть «оживают» при наведении */
+  .stepper button{transition:transform .45s var(--bounce),background .25s}
+  .stepper button:active{transform:scale(.8)}
+  .hbtn{transition:transform .45s var(--bounce),background .25s}
+  .tm{transition:transform .45s var(--bounce),background .25s,opacity .2s}
+  .ch{transition:background .25s,box-shadow .25s,transform .45s var(--bounce)}
+  .slot{animation:slotIn .6s var(--bounce) backwards;animation-delay:calc(var(--i) * 45ms)}
+  /* подсказка сверху появляется плавно */
+  .notice{animation:swap .45s var(--spring)}
+  /* пресеты расписания: чипы на главной Студии и список в «Настройках» */
+  .pre-row{display:flex;gap:6px;margin:0 0 10px;padding:1px 0;overflow-x:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 92%,transparent);mask-image:linear-gradient(90deg,#000 92%,transparent)}
+  .pre-row::-webkit-scrollbar{display:none}
+  .pre-row:empty{display:none}
+  .pchip{flex:none;display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:99px;background:var(--tile);color:var(--text);font-size:12px;font-weight:600;white-space:nowrap;
+    transition:background .25s,color .25s,box-shadow .25s,transform .45s var(--bounce);animation:slotIn .5s var(--bounce) backwards;animation-delay:calc(var(--i) * 40ms)}
+  .pchip:hover{background:var(--track)}
+  .pchip:active{transform:scale(.93);transition-duration:.1s}
+  .pchip.on{background:var(--grad);color:#fff;box-shadow:0 3px 10px rgba(var(--amrgb),.3)}
+  .pchip.add{background:transparent;color:var(--sub);box-shadow:inset 0 0 0 1px var(--line)}
+  .pchip.add:hover{background:var(--press);color:var(--text)}
+  .pchip svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round}
+  .pre-r{display:flex;align-items:center;gap:8px}
+  #sPresetList>.pre-r:first-child,#sPresetList:empty+.row{border-top:0}
+  .pname{flex:1;min-width:0;padding:7px 10px;border:0;border-radius:10px;outline:none;background:var(--tile);color:var(--text);font:inherit;font-size:12.5px;font-weight:600;
+    box-shadow:inset 0 0 0 .5px var(--line);transition:box-shadow .25s}
+  .pname:focus{box-shadow:inset 0 0 0 1.5px var(--a1)}
+  .pre-r .pbtn{padding:6px 11px;font-size:11.5px}
+  .pdel{flex:none;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--tile);color:var(--sub);transition:background .25s,color .25s,transform .45s var(--bounce)}
+  .pdel:hover{background:var(--track)}
+  .pdel:active{transform:scale(.85);transition-duration:.1s}
+  .pdel.arm{background:var(--err);color:#fff}
+  .pdel svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round}
+  /* окно бейджей: люди в списке тоже отвечают на нажатие */
+  .bd-u:active{transform:scale(.95);transition-duration:.1s}
+
   /* «Живой фон» выключен: декоративные анимации стоят */
   .panel.calm:not(.running):not(.busy)::before,.panel.calm::after,.panel.calm .hero::before,.panel.calm .card.sum::before,.panel.calm .logo::after,
   .panel.calm .title,.panel.calm .go,.panel.calm .slot:first-child,.panel.calm .day,.panel.calm .lk-chip,.panel.calm .fx *{animation:none!important}
@@ -3715,6 +3926,12 @@
                 <button id="limPlus" aria-label="Больше"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
               </div>
             </div>
+            <div class="row inline"><div><span>По расписанию</span><small id="lkSchSub">сам начнёт и закончит в эти часы</small></div>
+              <label class="switch"><input id="lkSch" type="checkbox" aria-label="Лайкать по расписанию"><i></i></label></div>
+            <div class="fold off" id="lkSchFold"><div>
+              <div class="row inline"><div><span>Часы</span><small>каждый день; через полночь тоже можно</small></div>
+                <div class="dts"><span class="dl">с</span><span id="lkSchFrom"></span><span class="dl">до</span><span id="lkSchTo"></span></div></div>
+            </div></div>
           </div>
         </section>
 
@@ -3753,7 +3970,7 @@
               <span class="lt"><b id="resetT">Сбросить калибровку</b><small>Скрипт забудет, как выглядит лайк</small></span>
             </button>
           </div>
-          <p class="foot">Работает и в фоновой вкладке: когда работы на странице кончаются, обновляет её через 1–5 с. Упрётся в лимит лайков DA — отдохнёт 8–13 минут и продолжит сам. После ошибки сервера пробует снова каждые 3 с.</p>
+          <p class="foot">Работает и в фоновой вкладке: когда работы на странице кончаются, обновляет её через 1–5 с. Одну ошибку DA пропускает и ставит дальше, а 5 ошибок подряд — это лимит лайков: отдохнёт 8–13 минут и продолжит на той же странице.</p>
         </section>
 
         <section class="page" data-p="2">
@@ -3768,6 +3985,7 @@
           <div class="notice" id="sNote" hidden></div>
           <div id="schWiz"></div>
 
+          <div class="pre-row" id="sPresets" aria-label="Пресеты расписания"></div>
           <nav class="seg mini" id="sMode" style="--n:3" role="tablist" aria-label="Режим расписания">
             <i id="sModeThumb"></i>
             <button role="tab" data-m="slots" aria-selected="true">По времени</button>
@@ -3792,10 +4010,6 @@
               </div></div>
               <div class="row inline"><div><span>Время</span><small id="sWinSub">картинки выходят только в эти часы</small></div>
                 <div class="dts"><span class="dl">с</span><input type="time" id="sWinFrom" aria-label="С какого часа"><span class="dl">до</span><input type="time" id="sWinTo" aria-label="До какого часа"></div></div>
-              <div class="row inline"><div><span>Только этот день</span><small id="sOneDaySub">выкл. — часы кончились, следующие идут на завтра</small></div>
-                <label class="switch"><input id="sOneDay" type="checkbox" aria-label="Только этот день"><i></i></label></div>
-              <div class="row inline"><div><span>Обходить занятые часы</span><small id="sBusySub">где уже стоит картинка — пропускаю</small></div>
-                <label class="switch"><input id="sBusy" type="checkbox" aria-label="Обходить занятые часы"><i></i></label></div>
               <div class="row inline"><div><span>Шаг</span><small>через сколько выходит следующая</small></div>
                 <div class="dts">${schStepper('sEvery', 'Шаг')}<select class="sel" id="sUnit" aria-label="Единица"><option value="hour">час</option><option value="day">дн</option></select></div></div>
             </div>
@@ -3812,64 +4026,16 @@
                 <span class="ico amber"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
                 <span class="lt"><b>Начать сначала</b><small></small></span>
               </button>
-              <button class="lrow" id="sRinoEdit" aria-expanded="false">
-                <span class="ico violet"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></span>
-                <span class="lt"><b>Список времени</b><small>свой порядок через запятую: 12AM, 8AM, 4PM…</small></span>${CHEV}
-              </button>
-              <div class="fold off" id="sRinoFold"><div>
-                <div class="row"><textarea class="rn-text" id="sRinoText" rows="6" spellcheck="false" aria-label="Список времени"></textarea><small class="rn-msg" id="sRinoMsg"></small></div>
-                <button class="lrow" id="sRinoReset">
-                  <span class="ico red"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
-                  <span class="lt"><b>Вернуть стандартное</b><small>30 картинок, как в схеме RinoAkuma</small></span>
-                </button>
-              </div></div>
             </div>
-            <div class="row" id="sDaysRow"><div class="rl"><span>Дни недели</span></div><div class="days" id="sDays"></div></div>
           </div>
 
           <button class="go sgo" id="sGo" title="Проставить время на картинках в Студии">${ICON_PLAY}${ICON_STOP}<span id="sGoLabel">Запланировать</span></button>
 
           <div class="group adv">
-            <button class="lrow" id="sAdvBtn" aria-expanded="false">
+            <button class="lrow" id="sSetBtn">
               <span class="ico gray"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg></span>
-              <span class="lt"><b>Дополнительно</b><small>какие картинки, сколько, проверка</small></span>${CHEV}
+              <span class="lt"><b>Настройки</b><small id="sSetSub">дни недели, какие картинки, сколько, проверка</small></span>${CHEV}
             </button>
-            <div class="fold off" id="sAdv"><div>
-              <div class="adv-h">Какие картинки</div>
-              <div class="row inline"><span>Порядок</span><select class="sel" id="sOrder" aria-label="Порядок">
-                <option value="dom">Как в Студии</option><option value="rev">Снизу вверх</option><option value="rnd">Случайно</option></select></div>
-              <div class="row inline"><div><span>Пропускать запланированные</span><small>у которых время уже стоит</small></div>
-                <label class="switch"><input id="sSkip" type="checkbox" aria-label="Пропускать запланированные"><i></i></label></div>
-              <div class="row inline"><div><span>Начинать с картинки №</span><small>1 — с самой первой</small></div>${schStepper('sFrom', 'Начинать с картинки №')}</div>
-              <div class="row inline"><div><span>Перепрыгивать</span><small id="sJumpSub">0 — подряд, без пропусков</small></div>${schStepper('sJump', 'Перепрыгивать картинок')}</div>
-              <div class="row inline"><div><span>Все страницы Студии</span><small>закончив страницу, идёт на следующую</small></div>
-                <label class="switch"><input id="sPages" type="checkbox" aria-label="Переходить по страницам"><i></i></label></div>
-              <div class="adv-h">Сколько</div>
-              <div class="row inline"><div><span>Всего картинок</span><small>0 — все черновики</small></div>${schStepper('sCount', 'Сколько картинок')}</div>
-              <div class="row inline"><div><span>В один час</span><small>сколько выходит одновременно</small></div>${schStepper('sPer', 'Картинок в один час')}</div>
-              <div class="row inline"><div><span>Пауза между картинками</span><small>секунд, пока скрипт проставляет</small></div>${schStepper('sGap', 'Пауза, сек')}</div>
-              <div class="adv-h">Проверка и помощь</div>
-              <button class="lrow" id="sTest" title="Проставить время только одной картинке">
-                <span class="ico pink"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg></span>
-                <span class="lt"><b>Проверить на одной картинке</b><small>поставит время только первой</small></span>
-              </button>
-              <button class="lrow" id="pkAll">
-                <span class="ico amber"><svg viewBox="0 0 24 24"><path d="M5 3.5l13 7.5-5.5 1.5L10 18z"/></svg></span>
-                <span class="lt"><b>Показать поля</b><small>если скрипт не находит кнопки Студии</small></span><span class="pill" id="pkPill" data-s="none">Автопоиск</span>
-              </button>
-              <button class="lrow" id="pkReset" hidden>
-                <span class="ico red"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
-                <span class="lt"><b>Забыть подсказки</b><small>вернуться к автопоиску</small></span>
-              </button>
-              <button class="lrow" id="sBookedRow" title="Нажмите, чтобы очистить">
-                <span class="ico violet"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></span>
-                <span class="lt"><b>Занятые часы</b><small>только пока идёт планирование</small></span><span class="val" id="sBooked">нет</span>
-              </button>
-              <button class="lrow" id="sResetAll" title="Вернуть все настройки Студии как после установки">
-                <span class="ico red"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
-                <span class="lt"><b id="sResetT">Сбросить настройки Студии</b><small id="sResetS">все вкладки, даты, часы, подсказки полей</small></span>
-              </button>
-            </div></div>
           </div>
         </section>
 
@@ -3936,6 +4102,85 @@
               </div>
               <button class="pbtn wide" id="lkReset">Вернуть как было</button>
             </div>
+          </div>
+        </section>
+
+        <section class="page" data-p="4">
+          <div class="lk-head">
+            <button class="pbtn" id="sSetBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>Назад</button>
+            <b>Настройки Студии</b>
+          </div>
+          <h6 class="sec">Пресеты</h6>
+          <div class="group">
+            <div id="sPresetList"></div>
+            <div class="row" id="sPresetEmpty"><small>Пока пусто. Настройте расписание и сохраните его — дальше оно включается одним нажатием на главной.</small></div>
+            <button class="lrow" id="sPresetAdd">
+              <span class="ico pink"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
+              <span class="lt"><b>Сохранить текущие настройки</b><small>режим, часы, шаг, дни, «какие картинки» — без даты</small></span>
+            </button>
+          </div>
+          <h6 class="sec" id="sSetModeH">Расписание</h6>
+          <div class="group" id="sSetSched">
+            <div id="sIntMore" hidden>
+              <div class="row inline"><div><span>Только этот день</span><small id="sOneDaySub">выкл. — часы кончились, следующие идут на завтра</small></div>
+                <label class="switch"><input id="sOneDay" type="checkbox" aria-label="Только этот день"><i></i></label></div>
+              <div class="row inline"><div><span>Обходить занятые часы</span><small id="sBusySub">где уже стоит картинка — пропускаю</small></div>
+                <label class="switch"><input id="sBusy" type="checkbox" aria-label="Обходить занятые часы"><i></i></label></div>
+            </div>
+            <div id="sRinoMore" hidden>
+              <button class="lrow" id="sRinoEdit" aria-expanded="false">
+                <span class="ico violet"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></span>
+                <span class="lt"><b>Список времени</b><small>свой порядок через запятую: 12AM, 8AM, 4PM…</small></span>${CHEV}
+              </button>
+              <div class="fold off" id="sRinoFold"><div>
+                <div class="row"><textarea class="rn-text" id="sRinoText" rows="6" spellcheck="false" aria-label="Список времени"></textarea><small class="rn-msg" id="sRinoMsg"></small></div>
+                <button class="lrow" id="sRinoReset">
+                  <span class="ico red"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
+                  <span class="lt"><b>Вернуть стандартное</b><small>30 картинок, как в схеме RinoAkuma</small></span>
+                </button>
+              </div></div>
+            </div>
+            <div class="row" id="sDaysRow"><div class="rl"><span>Дни недели</span></div><div class="days" id="sDays"></div></div>
+            <div class="row inline" id="sPerRow"><div><span>В один час</span><small>сколько выходит одновременно</small></div>${schStepper('sPer', 'Картинок в один час')}</div>
+          </div>
+          <h6 class="sec">Какие картинки</h6>
+          <div class="group">
+            <div class="row inline"><span>Порядок</span><select class="sel" id="sOrder" aria-label="Порядок">
+              <option value="dom">Как в Студии</option><option value="rev">Снизу вверх</option><option value="rnd">Случайно</option></select></div>
+            <div class="row inline"><div><span>Пропускать запланированные</span><small>у которых время уже стоит</small></div>
+              <label class="switch"><input id="sSkip" type="checkbox" aria-label="Пропускать запланированные"><i></i></label></div>
+            <div class="row inline"><div><span>Начинать с картинки №</span><small>1 — с самой первой</small></div>${schStepper('sFrom', 'Начинать с картинки №')}</div>
+            <div class="row inline"><div><span>Перепрыгивать</span><small id="sJumpSub">0 — подряд, без пропусков</small></div>${schStepper('sJump', 'Перепрыгивать картинок')}</div>
+            <div class="row inline"><div><span>Все страницы Студии</span><small>закончив страницу, идёт на следующую</small></div>
+              <label class="switch"><input id="sPages" type="checkbox" aria-label="Переходить по страницам"><i></i></label></div>
+          </div>
+          <h6 class="sec">Сколько и как быстро</h6>
+          <div class="group">
+            <div class="row inline"><div><span>Всего картинок</span><small>0 — все черновики</small></div>${schStepper('sCount', 'Сколько картинок')}</div>
+            <div class="row inline"><div><span>Пауза между картинками</span><small>секунд, пока скрипт проставляет</small></div>${schStepper('sGap', 'Пауза, сек')}</div>
+          </div>
+          <h6 class="sec">Проверка и помощь</h6>
+          <div class="group">
+            <button class="lrow" id="sTest" title="Проставить время только одной картинке">
+              <span class="ico pink"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg></span>
+              <span class="lt"><b>Проверить на одной картинке</b><small>поставит время только первой</small></span>
+            </button>
+            <button class="lrow" id="pkAll">
+              <span class="ico amber"><svg viewBox="0 0 24 24"><path d="M5 3.5l13 7.5-5.5 1.5L10 18z"/></svg></span>
+              <span class="lt"><b>Показать поля</b><small>если скрипт не находит кнопки Студии</small></span><span class="pill" id="pkPill" data-s="none">Автопоиск</span>
+            </button>
+            <button class="lrow" id="pkReset" hidden>
+              <span class="ico red"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
+              <span class="lt"><b>Забыть подсказки</b><small>вернуться к автопоиску</small></span>
+            </button>
+            <button class="lrow" id="sBookedRow" title="Нажмите, чтобы очистить">
+              <span class="ico violet"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></span>
+              <span class="lt"><b>Занятые часы</b><small>только пока идёт планирование</small></span><span class="val" id="sBooked">нет</span>
+            </button>
+            <button class="lrow" id="sResetAll" title="Вернуть все настройки Студии как после установки">
+              <span class="ico red"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
+              <span class="lt"><b id="sResetT">Сбросить настройки Студии</b><small id="sResetS">все вкладки, даты, часы, подсказки полей</small></span>
+            </button>
           </div>
         </section>
 
@@ -4143,6 +4388,9 @@
     };
     lookBtn.onclick = () => openLook(tabIdx !== 3);
     $('#lkBack').onclick = () => openLook(false);
+    // ---- настройки Студии: своя страница, на главной — только самое нужное ----
+    $('#sSetBtn').onclick = () => { if (schState.render) schState.render(); setTab(4); $('.clip').scrollTop = 0; };
+    $('#sSetBack').onclick = () => { setTab(2); $('.clip').scrollTop = 0; };
     const lkPre = $('#lkPre'), lkPal = $('#lkPal'), lkSym = $('#lkSym'), lkSkin = $('#lkSkin'), lkTheme = $('#lkTheme');
     const lkWin = $('#lkWin'), lkTabs = $('#lkTabs'), lkOwn = $('#lkOwn');
     const lkC1 = $('#lkC1'), lkC2 = $('#lkC2'), lkAnim = $('#lkAnim'), lkBurst = $('#lkBurst'), lkTitle = $('#lkTitle');
@@ -4274,6 +4522,64 @@
     };
     elGo.onclick = toggleRun;
     miniGo.onclick = () => (curMode === 'studio' ? schRun(0) : toggleRun());
+
+    // ---- лайкер по расписанию: сам стартует в выбранные часы на открытой ленте и сам заканчивает ----
+    // lkSchRun — до какого момента идёт запуск «по расписанию» (переживает обновления страницы);
+    // lkSchSkip — остановили вручную: до этого момента сам не запускается
+    let lkSch = { on: false, from: '22:00', to: '06:00' };
+    try { lkSch = Object.assign(lkSch, JSON.parse(GM_getValue('lkSched', '{}')) || {}); } catch (e) { /* по умолчанию */ }
+    const lkSchSave = () => GM_setValue('lkSched', JSON.stringify(lkSch));
+    // сейчас внутри часов? { in, end } — или когда начнётся следующий раз { in:false, next }
+    const lkSchWin = (now) => {
+      const f = pT(lkSch.from)[0], t = pT(lkSch.to)[0], p = partsIn(now, 'local');
+      const at = (dd, h) => toUtc(p.y, p.mo, p.d + dd, h, 0, 'local');
+      for (const dd of [-1, 0]) {
+        const s = at(dd, f), e = f < t ? at(dd, t) : at(dd + 1, t); // «с» не раньше «до» — через полночь (равны — сутки)
+        if (now >= s && now < e) return { in: true, end: e };
+      }
+      return { in: false, next: at(0, f) > now ? at(0, f) : at(1, f) };
+    };
+    const lkSw = $('#lkSch'), lkFold = $('#lkSchFold');
+    const hours = Array.from({ length: 24 }, (_, i) => [pad2(i) + ':00', fmt12(i, 0)]);
+    const lkFrom = csMake(hours, lkSch.from, (v) => { lkSch.from = v; lkSchSave(); lkSchTick(); }, 'С какого часа');
+    const lkTo = csMake(hours, lkSch.to, (v) => { lkSch.to = v; lkSchSave(); lkSchTick(); }, 'До какого часа');
+    $('#lkSchFrom').replaceWith(lkFrom.btn); $('#lkSchTo').replaceWith(lkTo.btn);
+    const paintLkSch = () => {
+      lkSw.checked = !!lkSch.on; lkFold.classList.toggle('off', !lkSch.on); lkFold.inert = !lkSch.on;
+      const now = Date.now(), w = lkSchWin(now), runEnd = +GM_getValue('lkSchRun', 0), skip = +GM_getValue('lkSchSkip', 0);
+      const when = (ms) => (dayWord(ms) === 'Сегодня' ? '' : dayWord(ms).toLowerCase() + ' ') + 'в ' + fmt12(partsIn(ms, 'local').h, 0);
+      $('#lkSchSub').textContent = !lkSch.on ? 'сам начнёт и закончит в эти часы'
+        : running && runEnd > now ? 'работаю до ' + fmt12(partsIn(runEnd, 'local').h, 0)
+          : w.in && skip > now ? 'остановлено вручную — снова ' + when(lkSchWin(skip + 60000).next || skip)
+            : w.in ? (candidates().length ? 'пора — сейчас начну' : 'пора, но тут нет работ — откройте ленту') : 'начну ' + when(w.next);
+    };
+    let lkSchWarned = 0;
+    function lkSchTick() {
+      paintLkSch();
+      if (!lkSch.on || curMode === 'studio') return;
+      const now = Date.now(), w = lkSchWin(now), runEnd = +GM_getValue('lkSchRun', 0);
+      if (running) {
+        if (runEnd && now >= runEnd) { GM_setValue('lkSchRun', 0); stop('По расписанию: время вышло — остановился', 'ok'); paintLkSch(); }
+        return;
+      }
+      if (!w.in || now < +GM_getValue('lkSchSkip', 0) || schRunning || stage !== 'off') return;
+      if (!candidates().length) {
+        if (lkSchWarned !== w.end) { lkSchWarned = w.end; status('По расписанию пора лайкать, но тут нет работ — откройте ленту (Watch или главную)', 'err'); }
+        return;
+      }
+      GM_setValue('lkSchRun', w.end);
+      status('По расписанию: начинаю, закончу в ' + fmt12(partsIn(w.end, 'local').h, 0), 'run');
+      run(); paintLkSch();
+    }
+    lkSw.onchange = () => {
+      lkSch.on = lkSw.checked; lkSchSave();
+      if (!lkSch.on && +GM_getValue('lkSchRun', 0)) GM_setValue('lkSchRun', 0); // дальше — обычный запуск, без автостопа
+      GM_setValue('lkSchSkip', 0); lkSchTick();
+      status(lkSch.on ? 'Лайкер по расписанию: с ' + fmt12(pT(lkSch.from)[0], 0) + ' до ' + fmt12(pT(lkSch.to)[0], 0) + ' — вкладку с лентой оставьте открытой' : 'Расписание лайкера выключено', 'ok');
+    };
+    paintLkSch(); lkSchPaint = paintLkSch;
+    setInterval(lkSchTick, 20000);
+    setTimeout(lkSchTick, 6000); // после загрузки (и после продолжения работы) — проверить сразу
 
     // ---- инструменты ----
     calTile.onclick = startCalib;
@@ -4534,8 +4840,10 @@
     updateMeta();
     paintTitle();
   }
+  let lkSchPaint = null; // подпись «По расписанию» обновляется сразу при старте и остановке
   function setBtn() {
     if (!panel) return;
+    if (lkSchPaint) lkSchPaint();
     panel.classList.toggle('running', running);
     elGo.classList.toggle('stop', running);
     if (wasRunning && !running) titleDone = document.hidden && stats.liked ? stats.liked : 0;
