@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.13.0
+// @version      1.14.0
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -847,6 +847,11 @@
   // лимит лайков DA: отдыхаем «около 10 минут» — каждый раз по-разному, от 8 до 13
   const limitMinutes = () => 8 + Math.random() * 5;
   const LIMIT_RE = /rate.?limit|too many|slow down|try again later|limit(ed)? (reached|exceeded)|throttl/i;
+  // DA лежит: вместо сайта короткая страница ошибки шлюза (CloudFront 502/503/504)
+  function daDown() {
+    const t = (document.body && document.body.innerText) || '';
+    return t.length < 4000 && /request could not be satisfied|gateway time-?out|bad gateway|service unavailable|error 50[234]/i.test(document.title + ' ' + t.slice(0, 800));
+  }
   const SESSION_RE = /csrf|token|expired|session|login|sign.?in/i; // DA просит заново войти/обновить страницу
   // Ждёт, обновляет страницу и после загрузки продолжает с того же места (счётчики сохраняются)
   async function reloadAndResume(why, minutes, keepDry) {
@@ -879,6 +884,8 @@
       const btn = nextButton();
 
       if (!btn) {
+        // DA лежит (страница ошибки) — ждём и обновляем; паузы растут, но не больше 10 минут
+        if (daDown()) { await reloadAndResume('DA сейчас не отвечает (ошибка сервера) — жду', Math.min(10, waitMinutes())); break; }
         if (!AUTO_SCROLL) { stop('Больше кнопок нет'); break; }
         window.scrollBy({ top: window.innerHeight * 0.8, behavior: scrollBeh() });
         await sleep(document.hidden ? 700 : 1500);
@@ -1013,7 +1020,7 @@
     tz: 'local',                   // всегда время компьютера
     times: ['18:00'], per: 1,      // режим slots: времена и сколько картинок в один час
     every: 1, unit: 'hour',        // режим interval: шаг
-    win: false, winFrom: '10:00', winTo: '22:00',
+    win: true, winFrom: '00:00', winTo: '23:00', winV: 2, // «Время»: только в эти часы (выкл. — подряд с ближайшего часа)
     days: [1, 1, 1, 1, 1, 1, 1],   // Пн…Вс
     order: 'dom', count: 0, skipDone: true, gap: 3,
     jump: 0, from: 1,              // перепрыгивать N картинок после каждой поставленной; начинать с картинки №
@@ -1040,8 +1047,9 @@
   if (!Array.isArray(sch.days) || sch.days.length !== 7) sch.days = [1, 1, 1, 1, 1, 1, 1];
   if (!Array.isArray(sch.booked)) sch.booked = [];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sch.intDay || '')) sch.intDay = '';
-  // часы «с … до …» теперь есть всегда; «выключено» раньше значило «весь день»
-  if (!sch.win) { sch.winFrom = '00:00'; sch.winTo = '23:00'; sch.win = true; }
+  // в прошлых версиях часы «с … до …» были включены всегда («выключено» значило «весь день») — переносим один раз,
+  // дальше переключатель «Время» хранит своё
+  if (!sch.winV) { if (!sch.win) { sch.winFrom = '00:00'; sch.winTo = '23:00'; } sch.win = true; sch.winV = 2; }
   sch.jump = Math.max(0, sch.jump | 0); sch.from = Math.max(1, sch.from | 0);
   if (!Array.isArray(sch.rinoTimes) || !sch.rinoTimes.length || sch.rinoTimes.some((t) => !/^\d{2}:00$/.test(t))) sch.rinoTimes = RINO_DEF.slice();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sch.rinoDate || '')) sch.rinoDate = '';
@@ -1105,7 +1113,8 @@
   // «С интервалом»: день из календаря с часа «с» (мс) или 0, если день не выбран (тогда — сегодня)
   function startRaw(s) {
     const d = pD(s.intDay);
-    return d ? toUtc(d[0], d[1], d[2], (pT(s.winFrom) || [0])[0], 0, s.tz) : 0;
+    // «Время» выключено — с начала выбранного дня (сегодня — с ближайшего часа)
+    return d ? toUtc(d[0], d[1], d[2], s.win ? (pT(s.winFrom) || [0])[0] : 0, 0, s.tz) : 0;
   }
   // Старт расписания: выбранное время, но не раньше ближайшего целого часа (прошлое DA не примет)
   const startMs = (s) => Math.max(nextHourMs(s.tz), startRaw(s));
@@ -2405,7 +2414,7 @@
     const paintMode = () => {
       const i = sch.mode === 'rino' ? 2 : sch.mode === 'interval' ? 1 : 0;
       modeBtns.forEach((b, n) => b.setAttribute('aria-selected', String(n === i)));
-      $('#sModeThumb').style.transform = 'translateX(' + (i * 100) + '%)';
+      segThumbFor($('#sMode'), $('#sModeThumb'), modeBtns[i]); // с учётом своего порядка вкладок
       $('#sSlots').hidden = i !== 0; $('#sInt').hidden = i !== 1; $('#sRino').hidden = i !== 2; $('#sDaysRow').hidden = i === 2;
       // страница «Настройки»: свои строки у каждого режима
       $('#sIntMore').hidden = i !== 1; $('#sRinoMore').hidden = i !== 2; $('#sPerRow').hidden = i === 2;
@@ -2415,6 +2424,7 @@
           : 'Каждый выбранный день картинки выходят в одни и те же часы — например, в 6 PM и 9 PM.';
       if (i === 2) drawRino();
     };
+    schState.paintMode = paintMode; // свой интерфейс перерисовывает ползунок режимов
     // ---- вкладка RinoAkuma: дата, сетка «время по порядку», свой список ----
     const rnDate = $('#sRinoDate'), rnText = $('#sRinoText'), rnMsg = $('#sRinoMsg'), rnFold = $('#sRinoFold'), rnEdit = $('#sRinoEdit');
     // отметки запуска: номер в списке → 'now' (ставлю сейчас) | 'err' (не вышло). Только для дня rnMarkDay
@@ -2604,6 +2614,12 @@
       stOpen = false; paintStartFold(); render();
       status('Дата: ' + dayStr(d) + ', ' + SCH_WD[(new Date(Date.UTC(...d.map((x, i) => (i === 1 ? x - 1 : x)))).getUTCDay() + 6) % 7].toLowerCase(), 'ok');
     };
+    // «Время «с … до …»» (в настройках): вкл. — только в эти часы; выкл. — подряд с ближайшего часа,
+    // а строка «Время» на главной прячется
+    const winSw = $('#sWin'), winRow = $('#sWinSub').closest('.row');
+    const paintWin = () => { winSw.checked = sch.win !== false; winRow.hidden = !winSw.checked; };
+    winSw.onchange = () => { sch.win = winSw.checked; schSave(); paintWin(); render(); };
+    paintWin();
     const oneSw = $('#sOneDay'); oneSw.checked = !!sch.oneDay; oneSw.onchange = () => { sch.oneDay = oneSw.checked; schSave(); render(); };
     const busySw = $('#sBusy'); busySw.checked = sch.avoidBusy !== false;
     busySw.onchange = () => { sch.avoidBusy = busySw.checked; schSave(); render(); };
@@ -2679,7 +2695,7 @@
       [['sUnit', 'unit'], ['sOrder', 'order']].forEach(([id, k]) => { const e = $('#' + id); e.value = sch[k]; if (e._cs) e._cs.set(e.value); });
       $('#sWinFrom').value = sch.winFrom; $('#sWinTo').value = sch.winTo;
       [['sPer', 'per'], ['sEvery', 'every'], ['sCount', 'count'], ['sGap', 'gap'], ['sJump', 'jump'], ['sFrom', 'from']].forEach(([id, k]) => { $('#' + id).value = sch[k]; });
-      oneSw.checked = !!sch.oneDay; busySw.checked = sch.avoidBusy !== false; skipSw.checked = !!sch.skipDone; pgSw.checked = sch.pages !== false;
+      oneSw.checked = !!sch.oneDay; busySw.checked = sch.avoidBusy !== false; skipSw.checked = !!sch.skipDone; pgSw.checked = sch.pages !== false; paintWin();
       [...daysBox.children].forEach((b, i) => b.setAttribute('aria-pressed', String(!!sch.days[i])));
       drawTimes(); paintMode(); render();
     }
@@ -2831,6 +2847,7 @@
       $('#sStartSub').textContent = sch.mode === 'interval' && plan[0] ? 'первая — ' + fmtNice(plan[0]) + (oneDay ? ', только этот день' : ', потом по шагу')
         : oneDay ? 'только этот день' : 'с этого дня, потом следующие';
       const wF = pT(sch.winFrom)[0], wT = pT(sch.winTo)[0];
+      $('#sWinOnSub').textContent = sch.win ? 'вкл. — только с ' + fmt12(wF, 0) + ' до ' + fmt12(wT, 0) + ' (часы — на главной)' : 'выкл. — подряд с ближайшего часа, без перерыва';
       $('#sWinSub').textContent = wF === 0 && wT === 23 ? 'весь день'
         : wF > wT ? 'через полночь: с ' + fmt12(wF, 0) + ' до ' + fmt12(wT, 0) + ' следующего дня'
           : oneDay ? 'только в эти часы этого дня, по кругу' : 'только в эти часы, после ' + fmt12(wT, 0) + ' — на следующий день';
@@ -2865,21 +2882,6 @@
       }
       const bn = sch.booked.length;
       $('#sBooked').textContent = bn ? String(bn) : 'нет';
-      // под кнопкой «Настройки» — что сейчас изменено, чтобы не искать
-      const set = [];
-      if (sch.mode === 'interval') { if (sch.oneDay) set.push('только этот день'); if (sch.avoidBusy === false) set.push('с текущего часа'); }
-      if (!rino) {
-        const on = SCH_WD.filter((_, k) => sch.days[k]);
-        if (on.length < 7) set.push(on.length ? on.join(', ') : 'нет дней');
-        if (sch.per > 1) set.push('по ' + sch.per + ' в час');
-      }
-      if (sch.order !== 'dom') set.push(sch.order === 'rev' ? 'снизу вверх' : 'случайно');
-      if (sch.from > 1) set.push('с картинки №' + sch.from);
-      if (sch.jump) set.push('перепрыгивать ' + sch.jump);
-      if (sch.count > 0) set.push('всего ' + sch.count);
-      if (!sch.skipDone) set.push('и запланированные');
-      if (sch.pages === false) set.push('одна страница');
-      $('#sSetSub').textContent = set.length ? set.join(' · ') : 'дни недели, какие картинки, сколько, проверка';
       const notes = [];
       if (!onStudio()) notes.push('Откройте Студию (deviantart.com/studio), чтобы запустить');
       notes.push(...warns);
@@ -2898,6 +2900,398 @@
         schState.found = f; schState.page = page; schState.pageKey = pk; lastHour = h; render();
       }
     }, 2000);
+  }
+
+  // ======================================================================
+  //  СВОЙ ИНТЕРФЕЙС: вкладки, блоки и строки можно переставить, скрыть и переименовать
+  //  (название, лого и шапку — нет). В режиме настройки: нажали — выбрали, внизу одна панель действий,
+  //  выбранное можно перетащить мышкой. Ключи элементам раздаются при запуске — разметку руками не трогаем
+  // ======================================================================
+  // { o: {контейнер: [ключи по порядку]}, h: {ключ: 1 — скрыт}, n: {ключ: своё название} }
+  let lay = { o: {}, h: {}, n: {} };
+  try { lay = Object.assign(lay, JSON.parse(GM_getValue('layout', '{}')) || {}); } catch (e) { /* как было */ }
+  ['o', 'h', 'n'].forEach((k) => { if (!lay[k] || typeof lay[k] !== 'object') lay[k] = {}; });
+  const laySave = () => GM_setValue('layout', JSON.stringify(lay));
+  // служебное: не выбирается и не двигается (заголовок страницы, мастер полей, окна статуса)
+  const LAY_FIXED = ['h:sSetBack', 'schWiz', 'sPresetList', 'sPresetEmpty', 'ai:aiSetFold', 'ai:aiStBox', 'fb:fbStBox', 'bd:bdStBox', 'bd:bdTeachBox'];
+  const LAY_KEEP = ['h:sSetBtn']; // нельзя скрыть: без неё в Студии не попасть в настройки
+  // понятные имена для блоков без подписи
+  const LAY_NAMES = {
+    'h:gauge': 'Счётчик лайков', 'h:nSkip': 'Статистика', go: 'Кнопка «Старт»', 'foot:2': 'Пояснение внизу',
+    'h:sN': 'Сводка расписания', sNote: 'Подсказка сверху', sPresets: 'Пресеты', sMode: 'Режимы', sModeHint: 'Описание режима',
+    'h:sSlots': 'Поля режима', sGo: 'Кнопка «Запланировать»', 'h:sSetBtn': 'Кнопка «Настройки»',
+    'ai:aiView': 'Разделы', 'ai:aiWrite': 'Раздел «Ответ»', 'ai:aiBulk': 'Раздел «Все комменты»', 'ai:aiMode': 'Что пишем', 'ai:aiWhyBox': 'За что',
+    'ai:aiCtx': 'Поле их комментария', 'ai:aiCtxTr': 'Перевод комментария', 'ai:aiVars': 'Варианты ответа', 'ai:cmSum': 'Сводка комментариев',
+    'ai:cmQ': 'Очередь ответов', 'ai:cmSendBox': 'Кнопки отправки', 'fb:fbKind': 'Что пишем', 'fb:fbText': 'Поле текста',
+    'bd:bdBadges': 'Что дарим', 'bd:bdUsers': 'Список людей', 'bd:bdLegend': 'Пояснение', 'bd:bdGo': 'Кнопка «Ответить всем»',
+  };
+  const LX_ICO = {
+    up: '<path d="M12 19V5M6 11l6-6 6 6"/>', down: '<path d="M12 5v14M6 13l6 6 6-6"/>', left: '<path d="M19 12H5M11 6l-6 6 6 6"/>', right: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+    eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+    off: '<path d="M3.5 3.5l17 17"/><path d="M10.6 5.6A9.6 9.6 0 0112 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 01-3.2 3.9M6.1 7.4A16.6 16.6 0 002.5 12S6 18.5 12 18.5a9.4 9.4 0 004-.9"/>',
+    pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>', parent: '<rect x="3.5" y="3.5" width="17" height="17" rx="3"/><rect x="7.5" y="9" width="9" height="6" rx="1.5"/>',
+    open: '<path d="M14 4h6v6M20 4l-8 8"/><path d="M18 14v4a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2h4"/>', x: '<path d="M7 7l10 10M17 7L7 17"/>',
+    tap: '<path d="M9 11V5.5a1.5 1.5 0 013 0V10"/><path d="M12 10V8.5a1.5 1.5 0 013 0V11"/><path d="M15 11v-.5a1.5 1.5 0 013 0V15a5 5 0 01-5 5h-1.2a5 5 0 01-3.8-1.8L5.2 15a1.5 1.5 0 012.3-1.9L9 14.5"/>',
+  };
+  const layIco = (k) => '<svg viewBox="0 0 24 24">' + LX_ICO[k] + '</svg>';
+  const layRoots = []; // окна: { sh, panel, scroll, host, ns, cont, sel, bar, sheet, pages }
+  let layEditing = false, layPass = false, layHome = null, layLast = null;
+  const layRepaint = [];
+  const HZ = (kind) => kind === 'tabs' || kind === 'inline'; // вкладки и кнопки в ряд двигаются влево-вправо
+  const layMov = (x) => !!(x && x.dataset && x.dataset.lk && x._lc && !LAY_FIXED.includes(x.dataset.lk));
+
+  // ползунок вкладок — под видимой кнопкой с учётом нового порядка; одна вкладка — переключатель не нужен
+  function segThumbFor(nav, thumb, btn) {
+    const p = nav.closest('.panel'), ed = !!(p && p.classList.contains('editing'));
+    const vis = [...nav.querySelectorAll(':scope>button')].filter((b) => ed || !b.classList.contains('lh'));
+    nav.style.setProperty('--n', Math.max(1, vis.length));
+    nav.classList.toggle('one', vis.length < 2 && !ed);
+    const i = vis.indexOf(btn);
+    thumb.style.opacity = i < 0 ? '0' : '';
+    thumb.style.transform = 'translateX(' + (Math.max(0, i) * 100) + '%)';
+  }
+  // что переименовывается: подпись вкладки или кнопки, заголовок раздела, жирный текст строки.
+  // Подписи с id меняет сам код (Старт/Стоп и т.п.) — их не трогаем
+  function layLabel(el, kind) {
+    const pick = (sels) => { for (const s of sels) { const l = el.querySelector(s); if (l) return l.id ? null : l; } return null; };
+    if (HZ(kind)) return pick([':scope>span.lt-t', ':scope>span']);
+    if (kind === 'blocks') return el.matches('button') ? pick([':scope>span']) : pick([':scope>h6.sec', ':scope>.lrow>.lt>b', ':scope>.lh>span']);
+    return pick([':scope>.lt>b', ':scope>.lrow>.lt>b', ':scope>.row>div>span:first-child', ':scope>.row>span:first-child', ':scope>div>span:first-child', ':scope>span:first-child']);
+  }
+  function layName(el) {
+    const k = el.dataset.lk;
+    if (lay.n[k]) return lay.n[k];
+    if (el._lb) return el._lb.dataset.lo;
+    if (LAY_NAMES[k]) return LAY_NAMES[k];
+    const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    return t ? (t.length > 30 ? t.slice(0, 29) + '…' : t) : 'без названия';
+  }
+  const layKind = (el) => { const c = el._lc; return c.kind === 'tabs' ? 'Вкладка' : c.kind === 'inline' ? 'Кнопка' : el.matches('.lsec') ? 'Раздел' : c.kind === 'rows' ? 'Строка' : 'Блок'; };
+  // раздать ключи: specs — [[селектор, вид]], вид: tabs | inline | blocks | rows
+  function layScan(R, specs) {
+    specs.forEach(([sel, kind]) => R.sh.querySelectorAll(sel).forEach((el) => {
+      if (!R.panel.contains(el) || R.cont.some((c) => c.el === el)) return;
+      const sec = el.closest('.lsec'), par = el.parentNode;
+      const c = { el, kind, R, key: R.ns + (el.id || (el.dataset.p != null ? 'p' + el.dataset.p : 'g:' + (sec ? sec.dataset.sk : par.id || '') + ':' + [...par.children].indexOf(el))) };
+      R.cont.push(c);
+      [...el.children].forEach((ch, i) => {
+        if (HZ(kind) && ch.tagName !== 'BUTTON') return;
+        if (ch.matches('.lx-bar,.lx-sheet')) return;
+        // голый текст кнопки — в отдельный span: так его можно переименовать, не трогая значки
+        if (ch.tagName === 'BUTTON' && !ch.querySelector(':scope>span')) {
+          const tn = [...ch.childNodes].filter((n) => n.nodeType === 3 && n.nodeValue.trim());
+          if (tn.length) { const s = document.createElement('span'); s.className = 'lt-t'; s.textContent = tn.map((n) => n.nodeValue).join('').trim(); tn.forEach((n) => n.remove()); ch.appendChild(s); }
+        }
+        const inner = ch.querySelector('[id]'), d = ch.dataset;
+        d.lk = R.ns + (d.t != null ? 't' + d.t : d.m ? 'm' + d.m : d.v ? 'v' + d.v : d.sk ? 's:' + d.sk
+          : ch.id || (inner ? 'h:' + inner.id : (String(ch.className).split(' ')[0] || ch.tagName.toLowerCase()) + ':' + i));
+        d.li = i; ch._lc = c;
+        const lb = layLabel(ch, kind);
+        if (lb) { if (lb.dataset.lo == null) lb.dataset.lo = lb.textContent; ch._lb = lb; }
+      });
+    }));
+  }
+  // плашки режима настройки — всегда первая и последняя в своём окне
+  function layPin(R) {
+    if (R.bar.parentNode !== R.host || R.host.firstChild !== R.bar) R.host.insertBefore(R.bar, R.host.firstChild);
+    if (R.host.lastChild !== R.sheet) R.host.appendChild(R.sheet);
+  }
+  function layoutApply() {
+    layRoots.forEach((R) => {
+      R.cont.forEach((c) => {
+        let items = [...c.el.children].filter((e) => e._lc === c);
+        const saved = lay.o[c.key];
+        if (Array.isArray(saved)) {
+          const rank = (e) => { const i = saved.indexOf(e.dataset.lk); return i < 0 ? 1000 + +e.dataset.li : i; };
+          const want = items.slice().sort((a, b) => rank(a) - rank(b));
+          // переставляем, только если порядок правда другой: иначе зря перезапустятся анимации
+          if (want.some((e, i) => e !== items[i])) { want.forEach((e) => c.el.appendChild(e)); items = want; }
+        }
+        items.forEach((e) => {
+          const k = e.dataset.lk;
+          e.classList.toggle('lh', !!lay.h[k]);
+          if (e._lb && e._lb.textContent !== (lay.n[k] || e._lb.dataset.lo)) e._lb.textContent = lay.n[k] || e._lb.dataset.lo;
+        });
+      });
+      layPin(R);
+    });
+    layRepaint.forEach((f) => { try { f(); } catch (e) { /* перерисуется позже */ } });
+  }
+  // плавная перестановка: элементы «доезжают» на новое место
+  function layFlip(els, fn) {
+    const a = new Map(els.map((e) => [e, e.getBoundingClientRect()]));
+    fn();
+    els.forEach((e) => {
+      const r0 = a.get(e), r1 = e.getBoundingClientRect(), dx = r0.left - r1.left, dy = r0.top - r1.top;
+      if ((dx || dy) && e.animate) e.animate([{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }], { duration: 420, easing: 'cubic-bezier(.32,.72,0,1)' });
+    });
+  }
+  const laySib = (el, dir) => { let o = dir < 0 ? el.previousElementSibling : el.nextElementSibling; while (o && !(layMov(o) && o._lc === el._lc)) o = dir < 0 ? o.previousElementSibling : o.nextElementSibling; return o; };
+  const layKeep = (c) => { lay.o[c.key] = [...c.el.children].filter((x) => x._lc === c).map((x) => x.dataset.lk); laySave(); layoutApply(); };
+
+  // ---- верхняя плашка: «Как было», «Готово» и быстрые переходы по страницам окна ----
+  function layBarPaint(R) {
+    const pages = R.pages ? R.pages() : [];
+    R._pages = pages;
+    R.bar.innerHTML = '<div class="lx-top"><span><b>Настройка интерфейса</b><small>нажмите на элемент — внизу появятся действия</small></span>'
+      + '<button class="pbtn" type="button" data-lxa="reset">Как было</button><button class="pbtn on" type="button" data-lxa="done">Готово</button></div>'
+      + (pages.length > 1 ? '<div class="lx-pages">' + pages.map((p, i) => '<button type="button" class="pchip' + (p.on ? ' on' : '') + '" data-lxp="' + i + '"></button>').join('') + '</div>' : '');
+    R.bar.querySelectorAll('[data-lxp]').forEach((b) => { b.textContent = pages[+b.dataset.lxp].name; });
+  }
+  // ---- нижняя панель: что выбрано и что с ним сделать ----
+  function laySheet(R) {
+    const s = R.sheet, el = R.sel;
+    if (!el || !el.isConnected) {
+      R.sel = null;
+      s.innerHTML = '<div class="lx-hint">' + layIco('tap') + '<span>Нажмите на вкладку, строку или блок, чтобы его изменить. Блок можно и перетащить мышкой</span></div>';
+      return;
+    }
+    const c = el._lc, k = el.dataset.lk, hz = HZ(c.kind), hid = !!lay.h[k];
+    const up = el.parentElement && el.parentElement.closest('[data-lk]');
+    const b = (act, ico, t, dis) => '<button type="button" data-lxs="' + act + '"' + (dis ? ' disabled' : '') + '>' + layIco(ico) + '<span>' + t + '</span></button>';
+    s.innerHTML = '<div class="lx-t"><span><b></b><small></small></span><button type="button" class="lx-x" data-lxs="x" title="Снять выбор (Esc)">' + layIco('x') + '</button></div>'
+      + '<div class="lx-acts">'
+      + b('up', hz ? 'left' : 'up', hz ? 'Левее' : 'Выше', !laySib(el, -1)) + b('down', hz ? 'right' : 'down', hz ? 'Правее' : 'Ниже', !laySib(el, 1))
+      + (LAY_KEEP.includes(k) ? '' : b('eye', hid ? 'eye' : 'off', hid ? 'Показать' : 'Скрыть'))
+      + (el._lb ? b('pen', 'pen', 'Название') : '')
+      + (c.kind === 'tabs' ? b('open', 'open', 'Открыть') : '')
+      + (up && layMov(up) ? b('parent', 'parent', 'Блок') : '')
+      + '</div>';
+    // у блоков без подписи имя уже описательное («Кнопка «Старт»») — без «Блок «…»» вокруг
+    s.querySelector('b').textContent = !lay.n[k] && !el._lb && LAY_NAMES[k] ? LAY_NAMES[k] : layKind(el) + ' «' + layName(el) + '»';
+    s.querySelector('small').textContent = hid ? 'скрыто — в обычном виде его не видно' : 'можно перетащить ' + (hz ? 'влево-вправо' : 'вверх-вниз');
+  }
+  function laySelect(R, el) {
+    if (R.sel) R.sel.classList.remove('lsel');
+    R.sel = layMov(el) ? el : null;
+    if (R.sel) { R.sel.classList.add('lsel'); layLast = R; }
+    laySheet(R);
+  }
+  function layMove(R, dir) {
+    const el = R.sel; if (!el) return;
+    const o = laySib(el, dir); if (!o) return;
+    layFlip([el, o], () => (dir < 0 ? el._lc.el.insertBefore(el, o) : el._lc.el.insertBefore(o, el)));
+    layKeep(el._lc); laySheet(R);
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+  function layEye(R) {
+    const el = R.sel; if (!el) return;
+    const c = el._lc, k = el.dataset.lk;
+    if (!lay.h[k] && c.kind === 'tabs' && [...c.el.children].filter((x) => x._lc === c && !lay.h[x.dataset.lk]).length < 2) return status('Хотя бы одна вкладка должна остаться', 'err');
+    if (lay.h[k]) delete lay.h[k]; else lay.h[k] = 1;
+    laySave(); layoutApply(); laySheet(R);
+  }
+  function layRename(R) {
+    const el = R.sel; if (!el || !el._lb) return;
+    const acts = R.sheet.querySelector('.lx-acts');
+    acts.innerHTML = '<input class="lx-in" maxlength="40" spellcheck="false" aria-label="Новое название"><button type="button" class="pbtn on" data-lxs="ok">Готово</button>';
+    const inp = acts.querySelector('input');
+    inp.value = el._lb.textContent; inp.focus(); inp.select();
+    inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); layRenameSave(R, inp.value); } else if (e.key === 'Escape') { e.preventDefault(); laySheet(R); } };
+  }
+  function layRenameSave(R, v) {
+    const el = R.sel; if (!el || !el._lb) return;
+    v = String(v || '').trim();
+    const k = el.dataset.lk;
+    if (!v || v === el._lb.dataset.lo) delete lay.n[k]; else lay.n[k] = v; // пустое — вернуть как было
+    laySave(); layoutApply(); laySheet(R); layRoots.forEach(layBarPaint);
+  }
+  function laySheetAct(R, act) {
+    if (act === 'x') return laySelect(R, null);
+    if (act === 'up' || act === 'down') return layMove(R, act === 'up' ? -1 : 1);
+    if (act === 'eye') return layEye(R);
+    if (act === 'pen') return layRename(R);
+    if (act === 'ok') return layRenameSave(R, R.sheet.querySelector('.lx-in').value);
+    if (act === 'parent') return laySelect(R, R.sel && R.sel.parentElement.closest('[data-lk]'));
+    if (act === 'open' && R.sel) { // открыть вкладку, не выходя из настройки
+      layPass = true;
+      try { R.sel.click(); } finally { layPass = false; }
+      layoutApply(); laySheet(R); layBarPaint(R);
+    }
+  }
+  function layEdit(on) {
+    layEditing = on;
+    layRoots.forEach((R) => {
+      R.panel.classList.toggle('editing', on);
+      if (R.sel) R.sel.classList.remove('lsel');
+      R.sel = null;
+      R.bar.hidden = R.sheet.hidden = !on;
+      if (on) { layBarPaint(R); laySheet(R); }
+    });
+    layoutApply();
+  }
+  function layReset() {
+    lay = { o: {}, h: {}, n: {} }; laySave();
+    layRoots.forEach((R) => R.cont.forEach((c) => [...c.el.children].filter((e) => e._lc === c).sort((a, b) => a.dataset.li - b.dataset.li).forEach((e) => c.el.appendChild(e))));
+    layoutApply();
+    if (layEditing) layRoots.forEach((R) => { layBarPaint(R); laySheet(R); });
+  }
+  let layRsArm = 0;
+  function layBarAct(R, a) {
+    if (a.dataset.lxa === 'done') { layEdit(false); return status('Готово — интерфейс сохранён', 'ok'); }
+    if (!layRsArm) { a.classList.add('arm'); a.textContent = 'Точно?'; layRsArm = setTimeout(() => { layRsArm = 0; a.classList.remove('arm'); a.textContent = 'Как было'; }, 3000); return; }
+    clearTimeout(layRsArm); layRsArm = 0;
+    layReset(); status('Интерфейс вернулся как было', 'ok');
+  }
+
+  // ---- перетаскивание: потянули выбранное (или то, что под курсором) — соседи расступаются ----
+  let layDrag = null, laySkipClick = 0;
+  function layDragMove(e) {
+    const d = layDrag;
+    if (!d || e.pointerId !== d.pid) return;
+    if (!d.on) {
+      if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 6) return;
+      d.on = true; laySelect(d.R, d.el); d.el.classList.add('ldrag');
+      const r0 = d.el.getBoundingClientRect();
+      d.gx = d.x0 - r0.left; d.gy = d.y0 - r0.top;
+    }
+    e.preventDefault();
+    const el = d.el, c = el._lc, hz = HZ(c.kind);
+    if (!hz) { // у краёв окна — прокрутка
+      const sr = d.R.scroll.getBoundingClientRect();
+      if (e.clientY < sr.top + 36) d.R.scroll.scrollTop -= 12; else if (e.clientY > sr.bottom - 36) d.R.scroll.scrollTop += 12;
+    }
+    el.style.transform = 'none';
+    const r = el.getBoundingClientRect(), want = hz ? e.clientX - d.gx : e.clientY - d.gy;
+    const mid = want + (hz ? r.width : r.height) / 2;
+    const sibs = [...c.el.children].filter((x) => x !== el && x._lc === c && layMov(x) && x.offsetParent !== null);
+    const idx = sibs.filter((s) => { const q = s.getBoundingClientRect(); return (hz ? q.left + q.width / 2 : q.top + q.height / 2) < mid; }).length;
+    const cur = sibs.filter((s) => s.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING).length;
+    if (idx !== cur && sibs.length) {
+      const before = new Map(sibs.map((s) => [s, s.getBoundingClientRect()]));
+      if (idx >= sibs.length) sibs[sibs.length - 1].after(el); else c.el.insertBefore(el, sibs[idx]);
+      sibs.forEach((s) => {
+        const a = before.get(s), q = s.getBoundingClientRect(), dx = a.left - q.left, dy = a.top - q.top;
+        if ((dx || dy) && s.animate) s.animate([{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }], { duration: 260, easing: 'cubic-bezier(.32,.72,0,1)' });
+      });
+    }
+    const q = el.getBoundingClientRect(), off = want - (hz ? q.left : q.top);
+    el.style.transform = hz ? 'translateX(' + off + 'px)' : 'translateY(' + off + 'px)';
+  }
+  function layDragEnd(e) {
+    const d = layDrag;
+    if (!d || (e && e.pointerId !== d.pid)) return;
+    layDrag = null;
+    if (!d.on) return;
+    laySkipClick = Date.now();
+    const el = d.el, t = el.style.transform;
+    el.classList.remove('ldrag'); el.style.transform = '';
+    if (t && t !== 'none' && el.animate) el.animate([{ transform: t }, { transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.32,.72,0,1)' });
+    layKeep(el._lc); laySheet(d.R);
+  }
+  window.addEventListener('pointermove', layDragMove, { passive: false });
+  window.addEventListener('pointerup', layDragEnd);
+  window.addEventListener('pointercancel', layDragEnd);
+  // клавиатура: стрелки двигают выбранное, Esc снимает выбор
+  document.addEventListener('keydown', (e) => {
+    const R = layLast;
+    if (!layEditing || !R || !R.sel) return;
+    const a = e.composedPath ? e.composedPath()[0] : e.target;
+    if (a && a.closest && a.closest('input,textarea,[contenteditable="true"]')) return;
+    const hz = HZ(R.sel._lc.kind);
+    if (e.key === 'Escape') laySelect(R, null);
+    else if (e.key === (hz ? 'ArrowLeft' : 'ArrowUp')) layMove(R, -1);
+    else if (e.key === (hz ? 'ArrowRight' : 'ArrowDown')) layMove(R, 1);
+    else return;
+    e.preventDefault(); e.stopPropagation();
+  }, true);
+
+  // ---- события одного теневого корня (главная панель или окна помощника) ----
+  function layEvents(sh) {
+    const rootOf = (t) => layRoots.find((R) => R.sh === sh && R.panel.contains(t));
+    sh.addEventListener('click', (e) => {
+      const t = e.target;
+      if (!t || !t.closest) return;
+      const go = t.closest('.lx-go');
+      if (go && !layEditing) {
+        e.preventDefault(); e.stopPropagation();
+        if (layHome) layHome();
+        layEdit(true);
+        return status('Настройка интерфейса: нажмите на вкладку, строку или блок. Закончили — «Готово»', 'ok');
+      }
+      if (!layEditing || layPass) return;
+      const R = rootOf(t);
+      if (!R) return;
+      if (Date.now() - laySkipClick < 350) { e.preventDefault(); e.stopPropagation(); return; } // это было перетаскивание
+      const a = t.closest('[data-lxa]'), s = t.closest('[data-lxs]'), p = t.closest('[data-lxp]');
+      if (a || s || p) { e.preventDefault(); e.stopPropagation(); }
+      if (a) return layBarAct(R, a);
+      if (p) { const pg = R._pages && R._pages[+p.dataset.lxp]; if (pg) { laySelect(R, null); pg.go(); layoutApply(); layBarPaint(R); } return; }
+      if (s) return laySheetAct(R, s.dataset.lxs);
+      if (t.closest('.lx-sheet,.lx-bar,header')) return; // поле названия и шапка работают как обычно
+      // остальное в окне — выбор, а не нажатие: в режиме настройки ничего не включается
+      e.preventDefault(); e.stopPropagation();
+      const it = t.closest('[data-lk]');
+      laySelect(R, it && R.panel.contains(it) ? it : null);
+    }, true);
+    sh.addEventListener('pointerdown', (e) => {
+      if (!layEditing || e.button !== 0) return;
+      const t = e.target;
+      if (!t || !t.closest || t.closest('.lx-sheet,.lx-bar,header')) return;
+      const R = rootOf(t);
+      if (!R) return;
+      if (t.closest('input,select,textarea')) e.preventDefault(); // поля и ползунки не трогаются случайно
+      const inner = t.closest('[data-lk]');
+      if (!inner || !R.panel.contains(inner)) return;
+      const el = R.sel && R.sel.contains(inner) ? R.sel : inner; // потянули внутри выбранного блока — едет весь блок
+      if (layMov(el)) layDrag = { R, el, pid: e.pointerId, x0: e.clientX, y0: e.clientY, on: false };
+    }, true);
+  }
+  function layAddRoot(R, specs) {
+    R.cont = []; R.sel = null;
+    layScan(R, specs);
+    R.bar = document.createElement('div'); R.bar.className = 'lx-bar'; R.bar.hidden = true;
+    R.sheet = document.createElement('div'); R.sheet.className = 'lx-sheet'; R.sheet.hidden = true;
+    layRoots.push(R);
+    if (!R.sh._layEv) { R.sh._layEv = true; layEvents(R.sh); }
+    if (layEditing) { R.panel.classList.add('editing'); R.bar.hidden = R.sheet.hidden = false; layBarPaint(R); laySheet(R); }
+    layoutApply();
+  }
+  // главная панель (лайкер и Студия). home() — открыть главную; pages() — быстрые переходы в плашке
+  function layoutInit(opts) {
+    // 1) раздел = заголовок + всё до следующего заголовка: переставляется одним блоком
+    shadow.querySelectorAll('.page[data-p="0"],.page[data-p="1"],.page[data-p="4"]').forEach((pg) => {
+      let cur = null;
+      [...pg.children].forEach((ch) => {
+        if (ch.matches('h6.sec')) { cur = document.createElement('div'); cur.className = 'lsec'; cur.dataset.sk = ch.id || ch.textContent.trim(); pg.insertBefore(cur, ch); }
+        else if (ch.matches('.foot,.lk-head')) { cur = null; return; }
+        if (cur) cur.appendChild(ch);
+      });
+    });
+    // 2) строка и её раскрывашка — одно целое
+    shadow.querySelectorAll('.lsec>.group, #sInt, #sRino').forEach((g) => [...g.children].forEach((ch) => {
+      const prev = ch.previousElementSibling;
+      if (!ch.matches('.fold') || !prev) return;
+      const w = document.createElement('div'); w.className = 'lpair';
+      g.insertBefore(w, prev); w.append(prev, ch);
+    }));
+    layHome = opts.home;
+    layAddRoot({ sh: shadow, panel, scroll: shadow.querySelector('.clip'), host: shadow.querySelector('.inner'), ns: '', pages: opts.pages },
+      [['#seg, #sMode', 'tabs'], ['.page[data-p="0"],.page[data-p="1"],.page[data-p="2"],.page[data-p="4"]', 'blocks'], ['.lsec>.group, #sInt, #sRino', 'rows']]);
+    const rs = shadow.querySelector('#lxReset'), rsT = shadow.querySelector('#lxResetT');
+    let arm = 0;
+    if (rs) rs.onclick = () => {
+      if (!arm) { rs.classList.add('arm'); rsT.textContent = 'Нажмите ещё раз — верну всё'; arm = setTimeout(() => { arm = 0; rs.classList.remove('arm'); rsT.textContent = 'Вернуть интерфейс как было'; }, 3000); return; }
+      clearTimeout(arm); arm = 0; rs.classList.remove('arm'); rsT.textContent = 'Вернуть интерфейс как было';
+      layReset(); status('Интерфейс вернулся как было: порядок, скрытое и названия', 'ok');
+    };
+  }
+  // окна помощника, «Идеи или жалобы» и бейджей — в том же режиме настройки
+  function layoutCards() {
+    if (!aiSh) return;
+    const add = (card, ns, specs, pages) => {
+      if (!card || layRoots.some((R) => R.panel === card)) return;
+      const b = card.querySelector(':scope>.ai-b');
+      if (b) layAddRoot({ sh: aiSh, panel: card, scroll: b, host: b, ns, pages }, specs);
+    };
+    const txt = (sel) => { const e = aiSh.querySelector(sel); return e ? e.textContent.trim() : ''; };
+    add(aiCard, 'ai:', [['#aiView, #aiMode, #aiProv', 'tabs'], ['#aiCard .ai-foot', 'inline'], ['#aiCard>.ai-b, #aiWrite, #aiBulk', 'blocks'], ['#aiBulk>.group, #aiSetFold .ai-g', 'rows']],
+      () => [{ name: txt('#aiView [data-v="write"]') || 'Ответ', on: aiNow.view !== 'bulk', go: () => { aiNow.view = 'write'; aiPaint(); } },
+        { name: txt('#aiView [data-v="bulk"]') || 'Все комменты', on: aiNow.view === 'bulk', go: () => { aiNow.view = 'bulk'; aiPaint(); } }]);
+    add(fbCard, 'fb:', [['#fbKind', 'tabs'], ['#fbCard>.ai-b', 'blocks']]);
+    add(bdCard, 'bd:', [['#bdCard .bd-tools', 'inline'], ['#bdCard>.ai-b', 'blocks'], ['#bdCard>.ai-b>.group', 'rows']]);
+    layRepaint.push(() => { if (aiCard) aiPaint(); if (fbCard) fbPaint(); });
+    layoutApply();
   }
 
   // ======================================================================
@@ -3852,6 +4246,64 @@
   .pdel:active{transform:scale(.85);transition-duration:.1s}
   .pdel.arm{background:var(--err);color:#fff}
   .pdel svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round}
+  /* свой интерфейс: скрытое не видно; в режиме настройки — полупрозрачное */
+  .panel:not(.editing) .lh{display:none!important}
+  .seg.one{display:none}
+  .lt-t{pointer-events:none}
+  .editing [data-lk]{position:relative;cursor:grab}
+  .editing .lh{opacity:.36;filter:saturate(.35)}
+  .editing :is(.pages,.ai-b){user-select:none;-webkit-user-select:none}
+  /* в режиме настройки ничего не «въезжает» заново, когда блоки меняются местами */
+  .editing .pages *,.editing .ai-b [data-lk],.editing .ai-b [data-lk] *{animation:none!important}
+  /* наведение — пунктир, выбранное — яркая рамка, перетаскиваемое — приподнято */
+  .editing [data-lk]:not(.lsel):hover{outline:1.5px dashed rgba(var(--a1rgb),.55);outline-offset:-1.5px}
+  .editing .lsel{outline:2px solid var(--a1)!important;outline-offset:-2px;z-index:3}
+  .editing .lsel:not(.ldrag){box-shadow:0 0 0 4px rgba(var(--a1rgb),.16)}
+  .editing .ldrag{z-index:40!important;transition:none!important;scale:1.025;cursor:grabbing;box-shadow:0 18px 40px rgba(0,0,0,.4),0 0 0 4px rgba(var(--a1rgb),.25)!important}
+  .editing .seg:has(.lsel)>i,.editing .seg:has(.ldrag)>i{opacity:.35}
+  /* первая видимая строка группы — без верхней линии (даже если перед ней что-то скрыто) */
+  .panel:not(.editing) :is(.group,#sInt,#sRino)>:nth-child(1 of :not([hidden]):not(.lh)),
+  .panel:not(.editing) :is(.group,#sInt,#sRino)>:nth-child(1 of :not([hidden]):not(.lh))>:is(.row,.lrow):first-child,
+  .editing :is(.group,#sInt,#sRino)>:nth-child(1 of :not([hidden])),
+  .editing :is(.group,#sInt,#sRino)>:nth-child(1 of :not([hidden]))>:is(.row,.lrow):first-child{border-top:0!important}
+  /* верхняя плашка: что за режим, «Как было», «Готово», быстрые переходы по страницам */
+  .lx-bar{position:sticky;top:0;z-index:45;margin:0 14px 10px;padding:9px 10px 9px 14px;border-radius:16px;
+    background:rgba(var(--a1rgb),.14);box-shadow:inset 0 0 0 1px rgba(var(--a1rgb),.35);-webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);animation:swap .45s var(--spring)}
+  .ai-b>.lx-bar{margin:0 0 10px}
+  .lx-top{display:flex;align-items:center;gap:8px}
+  .lx-top>span{flex:1;min-width:0;display:flex;flex-direction:column}
+  .lx-top b{font-size:13px;font-weight:650}
+  .lx-bar .pbtn{flex:none;padding:6px 11px;font-size:11.5px}
+  .lx-pages{display:flex;gap:6px;margin-top:8px;overflow-x:auto;scrollbar-width:none}
+  .lx-pages::-webkit-scrollbar{display:none}
+  .lx-pages .pchip{padding:5px 11px;font-size:11.5px}
+  :is(.lx-bar,.lx-sheet) .pbtn.on{background:var(--grad);color:#fff;box-shadow:0 3px 10px rgba(var(--amrgb),.3)}
+  .lx-bar .pbtn.arm{background:var(--err);color:#fff}
+  /* нижняя панель действий — как лист в iOS */
+  .lx-sheet{position:sticky;bottom:10px;z-index:45;margin:10px 14px 2px;padding:10px 10px 9px;border-radius:18px;background:var(--pop);
+    box-shadow:0 0 0 .5px var(--edge),0 14px 36px rgba(0,0,0,.42);-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);animation:sheetIn .5s var(--spring)}
+  .ai-b>.lx-sheet{margin:10px 0 2px}
+  @keyframes sheetIn{from{opacity:0;transform:translateY(18px) scale(.97)}}
+  .lx-t{display:flex;align-items:flex-start;gap:8px;padding:0 2px 9px}
+  .lx-t>span{flex:1;min-width:0;display:flex;flex-direction:column}
+  .lx-t b{font-size:13px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lx-x{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--tile);color:var(--sub);transition:background .2s,transform .4s var(--bounce)}
+  .lx-x:hover{background:var(--track);color:var(--text)}
+  .lx-x svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round}
+  .lx-acts{display:flex;gap:5px}
+  .lx-acts>button:not(.pbtn){flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 2px 7px;border-radius:13px;background:var(--tile);color:var(--text);
+    font-size:10.5px;font-weight:600;transition:background .2s,color .2s,transform .45s var(--bounce),opacity .2s}
+  .lx-acts>button:not(.pbtn):hover{background:var(--track);color:var(--a1l)}
+  .lx-acts>button:active{transform:scale(.92);transition-duration:.1s}
+  .lx-acts>button:disabled{opacity:.32;pointer-events:none}
+  .lx-acts svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .lx-acts span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .lx-in{flex:1;min-width:0;padding:9px 11px;border:0;border-radius:11px;outline:none;background:var(--tile);color:var(--text);font:inherit;font-size:13px;font-weight:600;
+    box-shadow:inset 0 0 0 1.5px var(--a1);animation:popin .3s var(--spring)}
+  .lx-acts>.pbtn{flex:none}
+  .lx-hint{display:flex;align-items:center;gap:10px;padding:2px 4px;font-size:12px;line-height:1.35;color:var(--sub)}
+  .lx-hint svg{flex:none;width:26px;height:26px;fill:none;stroke:var(--a1l);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;animation:tapHint 1.8s ease-in-out infinite}
+  @keyframes tapHint{50%{transform:translateY(-2px) scale(1.06)}}
   /* окно бейджей: люди в списке тоже отвечают на нажатие */
   .bd-u:active{transform:scale(.95);transition-duration:.1s}
 
@@ -3865,6 +4317,16 @@
   const ICON_PLAY = '<svg class="ic-play" viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 001.5.86l10.5-6.5a1 1 0 000-1.72L9.5 4.64A1 1 0 008 5.5z"/></svg>';
   const ICON_STOP = '<svg class="ic-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="3"/></svg>';
   const CHEV = '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+  // «Перенос настроек» — одни и те же две строки в «Инструментах» лайкера и в «Настройках» Студии
+  const XFER_ROWS = `
+            <button class="lrow es-exp" title="Скачать файл со всеми настройками EmoStudio">
+              <span class="ico violet"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19h14"/></svg></span>
+              <span class="lt"><b>Сохранить настройки в файл</b><small>лайкер, Студия с пресетами, оформление, бейджи — без ключа Gemini</small></span>
+            </button>
+            <button class="lrow es-imp" title="Загрузить файл с настройками EmoStudio">
+              <span class="ico amber"><svg viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5"/><path d="M5 19h14"/></svg></span>
+              <span class="lt"><b>Загрузить из файла</b><small>например, от друга — всё станет как у него</small></span>
+            </button>`;
 
   const HTML = `
   <div class="panel" data-theme="dark">
@@ -3970,6 +4432,8 @@
               <span class="lt"><b id="resetT">Сбросить калибровку</b><small>Скрипт забудет, как выглядит лайк</small></span>
             </button>
           </div>
+          <h6 class="sec">Перенос настроек</h6>
+          <div class="group">${XFER_ROWS}</div>
           <p class="foot">Работает и в фоновой вкладке: когда работы на странице кончаются, обновляет её через 1–5 с. Одну ошибку DA пропускает и ставит дальше, а 5 ошибок подряд — это лимит лайков: отдохнёт 8–13 минут и продолжит на той же странице.</p>
         </section>
 
@@ -4034,7 +4498,7 @@
           <div class="group adv">
             <button class="lrow" id="sSetBtn">
               <span class="ico gray"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg></span>
-              <span class="lt"><b>Настройки</b><small id="sSetSub">дни недели, какие картинки, сколько, проверка</small></span>${CHEV}
+              <span class="lt"><b>Настройки</b><small id="sSetSub">пресеты, расписание, какие картинки и помощь</small></span>${CHEV}
             </button>
           </div>
         </section>
@@ -4103,6 +4567,17 @@
               <button class="pbtn wide" id="lkReset">Вернуть как было</button>
             </div>
           </div>
+          <h6 class="sec">Интерфейс</h6>
+          <div class="group">
+            <button class="lrow lx-go" title="Переставить, скрыть и переименовать вкладки, блоки и строки">
+              <span class="ico pink"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><path d="M16.5 13.5v6M13.5 16.5h6"/></svg></span>
+              <span class="lt"><b>Настроить вкладки и кнопки</b><small>переставить, скрыть, переименовать — всё, кроме названия и лого</small></span>${CHEV}
+            </button>
+            <button class="lrow" id="lxReset" title="Вернуть порядок, скрытое и названия как после установки">
+              <span class="ico red"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
+              <span class="lt"><b id="lxResetT">Вернуть интерфейс как было</b><small>порядок, скрытое и названия</small></span>
+            </button>
+          </div>
         </section>
 
         <section class="page" data-p="4">
@@ -4122,6 +4597,8 @@
           <h6 class="sec" id="sSetModeH">Расписание</h6>
           <div class="group" id="sSetSched">
             <div id="sIntMore" hidden>
+              <div class="row inline"><div><span>Время «с … до …»</span><small id="sWinOnSub">вкл. — только в эти часы</small></div>
+                <label class="switch"><input id="sWin" type="checkbox" aria-label="Выходить только в часы «с … до …»"><i></i></label></div>
               <div class="row inline"><div><span>Только этот день</span><small id="sOneDaySub">выкл. — часы кончились, следующие идут на завтра</small></div>
                 <label class="switch"><input id="sOneDay" type="checkbox" aria-label="Только этот день"><i></i></label></div>
               <div class="row inline"><div><span>Обходить занятые часы</span><small id="sBusySub">где уже стоит картинка — пропускаю</small></div>
@@ -4176,6 +4653,11 @@
             <button class="lrow" id="sBookedRow" title="Нажмите, чтобы очистить">
               <span class="ico violet"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></span>
               <span class="lt"><b>Занятые часы</b><small>только пока идёт планирование</small></span><span class="val" id="sBooked">нет</span>
+            </button>
+            ${XFER_ROWS}
+            <button class="lrow lx-go" title="Переставить, скрыть и переименовать вкладки, блоки и строки">
+              <span class="ico pink"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><path d="M16.5 13.5v6M13.5 16.5h6"/></svg></span>
+              <span class="lt"><b>Настроить интерфейс</b><small>переставить, скрыть, переименовать вкладки и строки</small></span>
             </button>
             <button class="lrow" id="sResetAll" title="Вернуть все настройки Студии как после установки">
               <span class="ico red"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.5-5.8"/><path d="M4 4.5v4.2h4.2"/></svg></span>
@@ -4353,7 +4835,7 @@
       lookBtn.classList.toggle('on', i === 3); lookBtn.setAttribute('aria-pressed', String(i === 3));
       if (lookOpen !== (i === 3)) { lookOpen = i === 3; applyDeco(); }
       tabs.forEach((b, n) => { b.setAttribute('aria-selected', String(n === i)); b.tabIndex = n === i ? 0 : -1; });
-      segThumb.style.transform = 'translateX(' + (Math.min(i, 1) * 100) + '%)';
+      segThumbFor($('#seg'), segThumb, tabs[Math.min(i, 1)]); // с учётом своего порядка вкладок
       pages.forEach((p, n) => {
         p.classList.toggle('active', n === i);
         p.classList.toggle('left', n < i);
@@ -4523,6 +5005,24 @@
     elGo.onclick = toggleRun;
     miniGo.onclick = () => (curMode === 'studio' ? schRun(0) : toggleRun());
 
+    // ---- перенос настроек файлом ----
+    shadow.querySelectorAll('.es-exp').forEach((b) => {
+      b.onclick = () => {
+        const n = exportSettings();
+        status('Сохранил ' + n + ' групп настроек в файл — его можно отправить другу. Ключ Gemini в файл не попал', 'ok');
+      };
+    });
+    shadow.querySelectorAll('.es-imp').forEach((b) => {
+      b.onclick = () => {
+        if (running || schRunning) return status('Сначала остановите лайкер или планировщик', 'err');
+        importSettings((n, err) => {
+          if (err) return status(err, 'err');
+          status('Загрузил ' + n + ' групп настроек — обновляю страницу…', 'ok');
+          setTimeout(() => location.reload(), 900);
+        });
+      };
+    });
+
     // ---- лайкер по расписанию: сам стартует в выбранные часы на открытой ленте и сам заканчивает ----
     // lkSchRun — до какого момента идёт запуск «по расписанию» (переживает обновления страницы);
     // lkSchSkip — остановили вручную: до этого момента сам не запускается
@@ -4551,9 +5051,9 @@
       $('#lkSchSub').textContent = !lkSch.on ? 'сам начнёт и закончит в эти часы'
         : running && runEnd > now ? 'работаю до ' + fmt12(partsIn(runEnd, 'local').h, 0)
           : w.in && skip > now ? 'остановлено вручную — снова ' + when(lkSchWin(skip + 60000).next || skip)
-            : w.in ? (candidates().length ? 'пора — сейчас начну' : 'пора, но тут нет работ — откройте ленту') : 'начну ' + when(w.next);
+            : w.in ? (daDown() ? 'DA не отвечает — жду и обновляю страницу' : candidates().length ? 'пора — сейчас начну' : 'пора, но тут нет работ — откройте ленту') : 'начну ' + when(w.next);
     };
-    let lkSchWarned = 0;
+    let lkSchWarned = 0, lkSchDownT = 0;
     function lkSchTick() {
       paintLkSch();
       if (!lkSch.on || curMode === 'studio') return;
@@ -4563,6 +5063,15 @@
         return;
       }
       if (!w.in || now < +GM_getValue('lkSchSkip', 0) || schRunning || stage !== 'off') return;
+      // пора, а DA лежит — через 2–4 минуты обновим страницу и начнём, как только сайт оживёт
+      if (daDown()) {
+        if (!lkSchDownT) {
+          const m = 2 + Math.random() * 2;
+          lkSchDownT = setTimeout(() => location.reload(), m * 60000);
+          status('DA сейчас не отвечает — обновлю страницу через ' + Math.round(m) + ' мин и начну, как только он оживёт', 'err');
+        }
+        return;
+      }
       if (!candidates().length) {
         if (lkSchWarned !== w.end) { lkSchWarned = w.end; status('По расписанию пора лайкать, но тут нет работ — откройте ленту (Watch или главную)', 'err'); }
         return;
@@ -4611,6 +5120,19 @@
     buildWiz();
     initSched($, shadow);
     schBtnHooks.push(setBtn); // мини-кнопка в шапке перерисовывается при старте/стопе планировщика
+    // свой интерфейс: после перестановки перерисовать ползунки вкладок
+    layRepaint.push(() => setTab(tabIdx));
+    if (schState.paintMode) layRepaint.push(schState.paintMode);
+    const tabTxt = (k) => { const e = shadow.querySelector('[data-lk="' + k + '"] .lt-t'); return e ? e.textContent : ''; };
+    const goPage = (i) => { setTab(i); $('.clip').scrollTop = 0; };
+    try {
+      layoutInit({
+        home: () => goPage(panel.dataset.mode === 'studio' ? 2 : 0),
+        pages: () => (panel.dataset.mode === 'studio'
+          ? [{ name: 'Студия', on: tabIdx === 2, go: () => goPage(2) }, { name: 'Настройки Студии', on: tabIdx === 4, go: () => goPage(4) }]
+          : [{ name: tabTxt('t0') || 'Главная', on: tabIdx === 0, go: () => goPage(0) }, { name: tabTxt('t1') || 'Инструменты', on: tabIdx === 1, go: () => goPage(1) }]),
+      });
+    } catch (e) { console.error('[EmoStudio] свой интерфейс', e); }
 
     setInterval(updateMeta, 1000);
     setInterval(paintTitle, 1000); // сайт сам меняет заголовок при переходах — возвращаем счётчик
@@ -4631,6 +5153,7 @@
     // помощник и раздача бейджей — отдельные окна: их сбой не должен ломать основную панель
     try { aiInit(); } catch (e) { console.error('[EmoStudio] помощник ответов', e); }
     try { bdInit(); } catch (e) { console.error('[EmoStudio] раздача бейджей', e); }
+    try { layoutCards(); } catch (e) { console.error('[EmoStudio] свой интерфейс окон', e); }
 
     // ---- работа шла до обновления страницы — продолжаем сами ----
     const srs = takeSchResume();
@@ -5762,15 +6285,66 @@
   };
   let fbKind = 'idea', fbCard = null;
   const scriptVer = () => { try { return GM_info.script.version; } catch (e) { return '1.9'; } };
+
+  // ======================================================================
+  //  ПЕРЕНОС НАСТРОЕК ФАЙЛОМ: настроил у себя — отдал файл другу, он загрузил
+  // ======================================================================
+  // что переносим: лайкер, Студия с пресетами, оформление, помощник (без ключей), комментарии, бейджи.
+  // Не переносим: ключи API, ник, кому уже подарено, историю ответов, положение окна и временные отметки
+  const EXPORT_KEYS = ['delay', 'limit', 'calib2', 'lkSched', 'theme', 'deco', 'decoWin', 'layout', 'sch', 'schPresets', 'schSel',
+    'ai', 'aiPrefer', 'cm', 'cmFree', 'cmLikePaths', 'bd', 'bdSel'];
+  function exportSettings() {
+    const data = {};
+    EXPORT_KEYS.forEach((k) => {
+      let v = GM_getValue(k, undefined);
+      if (v === undefined || v === null || v === '') return;
+      try {
+        if (k === 'ai') { const o = JSON.parse(v); delete o.keys; v = JSON.stringify(o); } // ключ API — личный
+        if (k === 'sch') { const o = JSON.parse(v); ['booked', 'rinoBase', 'rinoFor', 'rinoStart'].forEach((x) => delete o[x]); v = JSON.stringify(o); }
+      } catch (e) { return; }
+      data[k] = v;
+    });
+    const file = { app: 'EmoStudio', v: scriptVer(), at: new Date().toISOString(), data };
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' }));
+    a.download = 'EmoStudio-настройки-' + todayIn('local') + '.json';
+    a.style.display = 'none'; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+    return Object.keys(data).length;
+  }
+  // done(сколько загружено, ошибка)
+  function importSettings(done) {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.json,application/json'; inp.style.display = 'none';
+    document.body.appendChild(inp);
+    inp.onchange = async () => {
+      const f = inp.files && inp.files[0]; inp.remove();
+      if (!f) return;
+      let file = null;
+      try { file = JSON.parse(await f.text()); } catch (e) { file = null; }
+      if (!file || file.app !== 'EmoStudio' || !file.data || typeof file.data !== 'object') return done(0, 'Это не файл настроек EmoStudio');
+      let n = 0;
+      Object.keys(file.data).forEach((k) => {
+        if (!EXPORT_KEYS.includes(k)) return;
+        let v = file.data[k];
+        if (k === 'ai') { // свой ключ API оставляем
+          try { const o = JSON.parse(v), cur = JSON.parse(GM_getValue('ai', '{}') || '{}'); o.keys = cur.keys || {}; v = JSON.stringify(o); } catch (e) { return; }
+        }
+        GM_setValue(k, v); n++;
+      });
+      done(n, n ? '' : 'В файле нет настроек EmoStudio');
+    };
+    inp.click();
+  }
   const pageKind = () => {
     const pth = location.pathname;
     return /^\/notifications/.test(pth) ? 'уведомления' : /\/art\//.test(pth) ? 'работа' : /studio/i.test(location.href) ? 'студия'
       : pth === '/' ? 'главная' : /^\/[^/]+\/?$/.test(pth) ? 'профиль' : 'другая';
   };
   function fbPaint() {
-    const ks = Object.keys(FB_KINDS), i = ks.indexOf(fbKind), K = FB_KINDS[fbKind];
-    aiQ('#fbKind').querySelectorAll('button').forEach((b, n) => b.setAttribute('aria-selected', String(n === i)));
-    aiQ('#fbKindThumb').style.transform = 'translateX(' + (i * 100) + '%)';
+    const K = FB_KINDS[fbKind], nav = aiQ('#fbKind'), btn = nav.querySelector('[data-v="' + fbKind + '"]');
+    nav.querySelectorAll(':scope>button').forEach((b) => b.setAttribute('aria-selected', String(b === btn)));
+    segThumbFor(nav, aiQ('#fbKindThumb'), btn);
     aiQ('#fbL').textContent = K[1]; aiQ('#fbText').placeholder = K[2];
   }
   function fbMessage() {
@@ -5847,19 +6421,18 @@
   function aiStatus(t, k) { cardStatus(aiQ('#aiStBox'), t, k); }
   function aiPaint() {
     const mark = (box, v) => box.querySelectorAll('[data-v]').forEach((b) => b.setAttribute('aria-pressed', String(Array.isArray(v) ? v.includes(b.dataset.v) : b.dataset.v === v)));
+    // вкладки выбираются по своим data-*, а не по номеру: их можно переставить в «Свой интерфейс»
+    const tabSel = (nav, thumb, btn) => { nav.querySelectorAll(':scope>button').forEach((b) => b.setAttribute('aria-selected', String(b === btn))); segThumbFor(nav, thumb, btn); };
     const vi = aiNow.view === 'bulk' ? 1 : 0;
-    aiQ('#aiView').querySelectorAll('button').forEach((b, n) => b.setAttribute('aria-selected', String(n === vi)));
-    aiQ('#aiViewThumb').style.transform = 'translateX(' + (vi * 100) + '%)';
+    tabSel(aiQ('#aiView'), aiQ('#aiViewThumb'), aiQ('#aiView [data-v="' + (vi ? 'bulk' : 'write') + '"]'));
     aiQ('#aiWrite').hidden = vi === 1; aiQ('#aiBulk').hidden = vi === 0;
     const mi = AI_MODES.findIndex((m) => m.id === aiNow.mode), M = AI_MODES[mi];
-    aiQ('#aiMode').querySelectorAll('button').forEach((b, n) => b.setAttribute('aria-selected', String(n === mi)));
-    aiQ('#aiModeThumb').style.transform = 'translateX(' + (mi * 100) + '%)';
+    tabSel(aiQ('#aiMode'), aiQ('#aiModeThumb'), aiQ('#aiMode [data-m="' + aiNow.mode + '"]'));
     aiQ('#aiWhyBox').hidden = !(aiNow.mode === 'thanks' || aiNow.mode === 'rethanks');
     aiQ('#aiWhyL').textContent = aiNow.mode === 'rethanks' ? 'Они благодарят за' : 'За что';
     mark(aiQ('#aiWhy'), aiNow.why);
-    const P = aiProv(), pi = ai.provider === 'gemini' ? 0 : 1;
-    aiQ('#aiProv').querySelectorAll('button').forEach((b, n) => b.setAttribute('aria-selected', String(n === pi)));
-    aiQ('#aiProvThumb').style.transform = 'translateX(' + (pi * 100) + '%)';
+    const P = aiProv();
+    tabSel(aiQ('#aiProv'), aiQ('#aiProvThumb'), aiQ('#aiProv [data-v="' + ai.provider + '"]'));
     aiQ('#aiModel').innerHTML = P.models.map((m) => '<button class="ch" data-v="' + m.id + '">' + m.n + '<small>' + m.d + '</small></button>').join('');
     mark(aiQ('#aiModel'), ai.models[ai.provider]);
     aiQ('#aiKeyL').textContent = 'Ключ ' + P.n;
