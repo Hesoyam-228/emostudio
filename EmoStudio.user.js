@@ -4184,6 +4184,8 @@
   /* тумблер: тень ручки как в iOS, фон перетекает мягко */
   .switch i,.tg{transition:background .35s var(--smooth),box-shadow .35s}
   .switch i::after,.tg::after{box-shadow:0 3px 8px rgba(0,0,0,.15),0 3px 1px rgba(0,0,0,.06),0 0 0 .5px rgba(0,0,0,.04)}
+  /* включённый тумблер — ровная заливка слева направо: вокруг ручки один цвет, без рыже-фиолетового ободка */
+  .switch input:checked+i,.on>.tg{background:linear-gradient(90deg,var(--a1),var(--am))}
   /* раскрывашки: содержимое мягко выезжает сверху, а не просто появляется */
   .fold>div>*{transition:transform .55s var(--spring),opacity .4s var(--smooth),background .25s}
   .fold.off>div>*{transform:translateY(-8px);opacity:0}
