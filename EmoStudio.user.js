@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.14.1
+// @version      1.15.0
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -12,6 +12,7 @@
 // @noframes
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_addValueChangeListener
 // @grant        unsafeWindow
 // @grant        GM_xmlhttpRequest
 // @connect      api.x.ai
@@ -113,6 +114,7 @@
       const ofetch = W.fetch;
       if (typeof ofetch === 'function') {
         W.fetch = function (input, init) {
+          if (init && init.esQuiet) return ofetch.apply(this, arguments); // запросы самого скрипта (продажи) лайкер не считает
           let ev = null;
           try {
             const url = typeof input === 'string' ? input : (input && input.url) || String(input);
@@ -4434,6 +4436,33 @@
               <span class="lt"><b id="resetT">Сбросить калибровку</b><small>Скрипт забудет, как выглядит лайк</small></span>
             </button>
           </div>
+          <h6 class="sec">Продажи</h6>
+          <div class="group">
+            <div class="row inline"><div><span>Звук при покупке</span><small id="saleSub">купили картинку — приятный звук и плашка</small></div>
+              <label class="switch"><input id="saleOn" type="checkbox" aria-label="Звук при покупке"><i></i></label></div>
+            <div class="fold off" id="saleFold"><div>
+              <div class="row inline"><div><span>Звук</span><small>выберите — сразу услышите</small></div><span id="saleTone"></span></div>
+              <div class="row"><div class="rl"><span>Громкость</span><output id="saleVolV"></output></div>
+                <input id="saleVol" type="range" min="5" max="100" step="5" aria-label="Громкость звука продажи"></div>
+              <div class="row inline"><div><span>Подарки Points</span><small>звенеть и когда дарят Points</small></div>
+                <label class="switch"><input id="salePts" type="checkbox" aria-label="Звенеть за подарки Points"><i></i></label></div>
+              <button class="lrow" id="saleTest">
+                <span class="ico amber"><svg viewBox="0 0 24 24"><path d="M6.5 16.5h11l-1.4-2.2V10a4.1 4.1 0 00-8.2 0v4.3z"/><path d="M10.2 19.2a1.9 1.9 0 003.6 0"/></svg></span>
+                <span class="lt"><b>Проверить звук</b><small>сыграть и показать плашку «Продано»</small></span>
+              </button>
+            </div></div>
+            <div class="row inline"><div><span>Благодарить за покупку</span><small id="thxSub">сам напишет покупателю «спасибо»</small></div>
+              <label class="switch"><input id="thxOn" type="checkbox" aria-label="Благодарить за покупку"><i></i></label></div>
+            <div class="fold off" id="thxFold"><div>
+              <div class="row"><div class="rl"><span>Тексты «спасибо»</span><output id="thxTxtN"></output></div>
+                <textarea class="rn-text" id="thxTexts" rows="5" spellcheck="false" aria-label="Тексты благодарности"></textarea>
+                <small class="rn-msg">по одному в строке, каждый раз — случайный. {name} — ник покупателя, {title} — название картинки</small></div>
+            </div></div>
+            <button class="lrow" id="thxAll">
+              <span class="ico pink"><svg viewBox="0 0 24 24"><path d="M12 19.5s-7.5-4.4-7.5-9.6A4.1 4.1 0 0112 7.6a4.1 4.1 0 017.5 2.3c0 5.2-7.5 9.6-7.5 9.6z"/></svg></span>
+              <span class="lt"><b id="thxAllT">Поблагодарить всех без ответа</b><small id="thxAllSub">найду продажи без «спасибо» и отвечу каждому</small></span>
+            </button>
+          </div>
           <h6 class="sec">Перенос настроек</h6>
           <div class="group">${XFER_ROWS}</div>
           <p class="foot">Работает и в фоновой вкладке: когда работы на странице кончаются, обновляет её через 1–5 с. Одну ошибку DA пропускает и ставит дальше, а 5 ошибок подряд — это лимит лайков: отдохнёт 8–13 минут и продолжит на той же странице.</p>
@@ -5098,6 +5127,94 @@
     $('#bdRow').onclick = () => bdOpen();
     $('#cmRow').onclick = () => { if (!ai.on) { status('Сначала включите «Помощник ответов» выше', 'err'); return; } aiOpen('bulk'); };
     $('#fbRow').onclick = () => fbOpen();
+
+    // ---- продажи: звук «Продано» и «спасибо» покупателям ----
+    const saleSw = $('#saleOn'), saleFold = $('#saleFold'), thxSw = $('#thxOn'), thxFold = $('#thxFold');
+    const thxAllBtn = $('#thxAll'), thxAllT = $('#thxAllT'), thxAllSub = $('#thxAllSub'), thxTexts = $('#thxTexts');
+    const saleToneCs = csMake(SALE_TONES, sale.tone, (v) => { sale.tone = v; saleSave(); salePlay(1, v); }, 'Звук продажи');
+    $('#saleTone').replaceWith(saleToneCs.btn);
+    const saleVol = $('#saleVol'), saleVolV = $('#saleVolV');
+    const ago = (ms) => {
+      const m = Math.round((Date.now() - ms) / 60000), p = partsIn(ms, 'local');
+      return m < 1 ? 'только что' : m < 60 ? m + ' мин назад' : dayWord(ms).toLowerCase() + ' в ' + fmt12(p.h, p.mi);
+    };
+    salePaint = () => {
+      saleSw.checked = !!sale.on; saleFold.classList.toggle('off', !sale.on); saleFold.inert = !sale.on;
+      const seen = saleJson('saleSeen'), last = seen && seen.last;
+      $('#saleSub').textContent = !sale.on ? 'купили картинку — приятный звук и плашка'
+        : last ? 'последняя продажа: ' + ago(last.ts) : 'слежу за продажами, пока открыт DA';
+    };
+    let thxArm = 0, thxFound = [], thxScanning = false;
+    const thxDisarm = () => { clearTimeout(thxArm); thxArm = 0; thxAllBtn.classList.remove('arm'); };
+    thxPaint = () => {
+      thxSw.checked = !!thx.on; thxFold.classList.toggle('off', !thx.on); thxFold.inert = !thx.on;
+      const q = saleArr('thxQ'), ppl = (l) => new Set(l.map((x) => x.uid)).size, man = ppl(q.filter((x) => x.man)), log = saleArr('thxLog')[0];
+      $('#thxSub').textContent = q.length ? 'в очереди: ' + ppl(q) + ' ' + cmN(ppl(q), 'покупатель', 'покупателя', 'покупателей') + ' · по одному раз в 30–45 с'
+        : log && Date.now() - log.t < 864e5 ? (log.ok ? 'последнее «спасибо»: ' + log.who + ', ' + ago(log.t) : 'не вышло: ' + log.who + ' — ' + (log.err || 'ошибка DA'))
+          : thx.on ? 'новым покупателям — через 1–3 минуты' : 'сам напишет покупателю «спасибо»';
+      $('#thxTxtN').textContent = thxLines().length ? thxLines().length + ' шт.' : 'стандартные';
+      if (thxArm || thxScanning) return;
+      thxAllBtn.classList.toggle('arm', !!man);
+      thxAllT.textContent = man ? 'Остановить — осталось ' + man : 'Поблагодарить всех без ответа';
+      thxAllSub.textContent = man ? 'оставшимся «спасибо» не отправлю' : 'найду продажи без «спасибо» и отвечу каждому';
+    };
+    saleVol.value = sale.vol; saleVolV.textContent = sale.vol + '%';
+    $('#salePts').checked = !!sale.pts;
+    thxTexts.value = thxLines().length ? thxLines().join('\n') : THX_TEXTS.join('\n');
+    salePaint(); thxPaint();
+    setInterval(() => { saleLoad(); thxLoad(); salePaint(); thxPaint(); }, 5000);
+    saleSw.onchange = () => {
+      const was = sale.on || thx.on;
+      sale.on = saleSw.checked; saleSave(); saleRebase(was); salePaint();
+      if (sale.on) saleUnlock();
+      status(sale.on ? 'Звук продаж включён: «дзынь» и плашка при каждой покупке, пока открыта любая вкладка DA' : 'Звук продаж выключен', 'ok');
+    };
+    saleVol.oninput = () => { saleVolV.textContent = saleVol.value + '%'; };
+    saleVol.onchange = () => { sale.vol = +saleVol.value; saleSave(); salePlay(1); };
+    $('#salePts').onchange = (e) => { sale.pts = e.target.checked; saleSave(); };
+    $('#saleTest').onclick = async () => {
+      const ok = await salePlay(1), tn = (SALE_TONES.find((x) => x[0] === sale.tone) || SALE_TONES[0])[1];
+      saleToast([{ kind: 'sale', title: 'Так прозвучит покупка', profit: 4.89, who: '' }],
+        { test: true, sub: ok ? 'проверка · звук «' + tn + '», громкость ' + sale.vol + '%' : 'браузер не дал звук — кликните по странице и нажмите ещё раз' });
+    };
+    thxSw.onchange = () => {
+      const was = sale.on || thx.on;
+      thx.on = thxSw.checked; thxSave(); saleRebase(was); thxPaint();
+      status(thx.on ? 'Новым покупателям напишу «спасибо» сам — через 1–3 минуты после покупки' : 'Автоматическое «спасибо» выключено', 'ok');
+    };
+    thxTexts.onchange = () => {
+      thx.texts = thxTexts.value.split('\n').map((s) => s.trim()).filter(Boolean).join('\n');
+      if (!thx.texts) thxTexts.value = THX_TEXTS.join('\n'); // всё стёрли — останутся стандартные
+      thxSave(); thxPaint();
+    };
+    thxAllBtn.onclick = async () => {
+      const q = saleArr('thxQ');
+      if (q.some((x) => x.man)) {
+        GM_setValue('thxQ', JSON.stringify(q.filter((x) => !x.man)));
+        status('Остановил: оставшимся «спасибо» не отправлю', 'ok'); thxPaint(); return;
+      }
+      if (thxArm) { // второй клик — подтверждение
+        thxDisarm();
+        const n = thxAdd(thxFound, true);
+        const ppl = new Set(thxFound.map((x) => x.uid)).size;
+        status(n ? 'Отправляю «спасибо»: ' + ppl + ' ' + cmN(ppl, 'покупателю', 'покупателям', 'покупателям') + ' — по одному раз в 30–45 с, кто купил несколько — одно «спасибо» за все. Вкладку DA не закрывайте' : 'Эти продажи уже в очереди', 'run');
+        thxPaint(); setTimeout(() => thxTick(), 400);
+        return;
+      }
+      if (thxScanning) return;
+      thxScanning = true;
+      thxAllT.textContent = 'Ищу продажи без «спасибо»…'; thxAllSub.textContent = 'смотрю последние 50 уведомлений о продажах';
+      try { thxFound = await thxScan(); } catch (e) {
+        thxScanning = false; thxPaint(); status('Не вышло прочитать уведомления DA: ' + e.message, 'err'); return;
+      }
+      thxScanning = false;
+      if (!thxFound.length) { thxPaint(); status('Все последние покупки уже с «спасибо» 👍', 'ok'); return; }
+      const names = [...new Set(thxFound.map((x) => x.who))];
+      thxAllBtn.classList.add('arm');
+      thxAllT.textContent = 'Отправить ' + names.length + ' «спасибо»' + (thxFound.length > names.length ? ' (' + thxFound.length + ' ' + cmN(thxFound.length, 'покупка', 'покупки', 'покупок') + ')' : '') + '? Нажмите ещё раз';
+      thxAllSub.textContent = names.slice(0, 4).join(', ') + (names.length > 4 ? ' и ещё ' + (names.length - 4) : '');
+      thxArm = setTimeout(() => { thxDisarm(); thxPaint(); }, 6000);
+    };
     const aiRow = $('#aiRow');
     aiRow.classList.toggle('on', ai.on);
     aiRow.onclick = () => {
@@ -5156,6 +5273,7 @@
     try { aiInit(); } catch (e) { console.error('[EmoStudio] помощник ответов', e); }
     try { bdInit(); } catch (e) { console.error('[EmoStudio] раздача бейджей', e); }
     try { layoutCards(); } catch (e) { console.error('[EmoStudio] свой интерфейс окон', e); }
+    try { saleInit(); } catch (e) { console.error('[EmoStudio] продажи', e); }
 
     // ---- работа шла до обновления страницы — продолжаем сами ----
     const srs = takeSchResume();
@@ -6294,7 +6412,7 @@
   // что переносим: лайкер, Студия с пресетами, оформление, помощник (без ключей), комментарии, бейджи.
   // Не переносим: ключи API, ник, кому уже подарено, историю ответов, положение окна и временные отметки
   const EXPORT_KEYS = ['delay', 'limit', 'calib2', 'lkSched', 'theme', 'deco', 'decoWin', 'layout', 'sch', 'schPresets', 'schSel',
-    'ai', 'aiPrefer', 'cm', 'cmFree', 'cmLikePaths', 'bd', 'bdSel'];
+    'ai', 'aiPrefer', 'cm', 'cmFree', 'cmLikePaths', 'bd', 'bdSel', 'sale', 'thx'];
   function exportSettings() {
     const data = {};
     EXPORT_KEYS.forEach((k) => {
@@ -8368,6 +8486,496 @@
     bdCard.addEventListener('keydown', (e) => { if (e.key === 'Escape') { bdClose(); e.stopPropagation(); } });
     cardChrome(bdCard, bdQ('#bdHead'), bdQ('#bdMin'));
     setInterval(bdMountBtn, 1500);
+  }
+
+  // ======================================================================
+  //  ПРОДАЖИ: купили картинку — приятный «дзынь», плашка «Продано» и (если включено) «спасибо» покупателю
+  //  Раз в минуту одна из открытых вкладок DA заглядывает в папку уведомлений «Transactions»
+  //  (продажи Exclusive, премиум-загрузки, подарки Points). О новой продаже узнают все вкладки:
+  //  плашку показывает та, на которую вы смотрите, а звук играет одна — где браузер разрешил звук
+  // ======================================================================
+  let sale = { on: true, tone: 'coin', vol: 70, pts: true };
+  const saleLoad = () => { try { Object.assign(sale, JSON.parse(GM_getValue('sale', '{}')) || {}); } catch (e) { /* по умолчанию */ } };
+  saleLoad();
+  const saleSave = () => GM_setValue('sale', JSON.stringify(sale));
+  const SALE_TONES = [['coin', 'Монетка'], ['bell', 'Колокольчик'], ['till', 'Касса'], ['harp', 'Арфа']];
+  const SALE_POLL = 60000;
+  const SALE_TAB = Math.random().toString(36).slice(2, 10);
+  const saleJson = (k) => { try { return JSON.parse(GM_getValue(k, '') || 'null'); } catch (e) { return null; } };
+  const saleArr = (k) => { const v = saleJson(k); return Array.isArray(v) ? v : []; };
+  const DA_V = 20230710;
+  let saleAc = null, saleVerb = null, saleFail = 0, saleBusy = false, salePaint = null;
+
+  // ---- звук: синтезируем прямо в браузере, без файлов (сайт не может их заблокировать) ----
+  function saleCtx() {
+    if (!saleAc) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      try { saleAc = new AC(); } catch (e) { return null; }
+    }
+    return saleAc;
+  }
+  const saleCanPlay = () => !!saleAc && saleAc.state === 'running';
+  // браузер даёт звук только после клика по странице — на первом же клике «размораживаем» звук
+  function saleUnlock() {
+    if (!sale.on) return;
+    const ac = saleCtx();
+    if (ac && ac.state !== 'running') ac.resume().catch(() => {});
+  }
+  // лёгкое эхо комнаты: звон не обрывается, а мягко тает
+  function saleReverb(ac) {
+    if (saleVerb && saleVerb.context === ac) return saleVerb;
+    const len = Math.floor(ac.sampleRate * 1.6), buf = ac.createBuffer(2, len, ac.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2);
+    }
+    const cv = ac.createConvolver(), wet = ac.createGain();
+    cv.buffer = buf; wet.gain.value = 0.2;
+    cv.connect(wet).connect(ac.destination);
+    return (saleVerb = cv);
+  }
+  // одна нота из нескольких синусов-обертонов [кратность, громкость, доля длины]: мягкая атака, долгое затухание
+  function saleNote(ac, out, t, f, dur, parts, g) {
+    parts.forEach(([r, a, dk]) => {
+      const o = ac.createOscillator(), gn = ac.createGain(), end = t + dur * (dk || 1);
+      o.type = 'sine'; o.frequency.value = f * r;
+      gn.gain.setValueAtTime(0.0001, t);
+      gn.gain.exponentialRampToValueAtTime(Math.max(0.0002, g * a), t + 0.006);
+      gn.gain.exponentialRampToValueAtTime(0.0001, end);
+      o.connect(gn).connect(out);
+      o.start(t); o.stop(end + 0.05);
+    });
+  }
+  // короткий щелчок — как выдвигается ящик кассы
+  function saleClick(ac, out, t, g) {
+    const len = Math.floor(ac.sampleRate * 0.05), b = ac.createBuffer(1, len, ac.sampleRate), d = b.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 4);
+    const s = ac.createBufferSource(), f = ac.createBiquadFilter(), gn = ac.createGain();
+    s.buffer = b; f.type = 'bandpass'; f.frequency.value = 2600; f.Q.value = 1.2; gn.gain.value = g * 0.9;
+    s.connect(f).connect(gn).connect(out);
+    s.start(t);
+  }
+  const SALE_BRIGHT = [[1, 1], [2, 0.16, 0.6], [3, 0.05, 0.35]];
+  const SALE_BELL = [[1, 1], [2.76, 0.22, 0.4], [5.4, 0.07, 0.22], [0.5, 0.1, 1]];
+  const SALE_PLUCK = [[1, 1], [2, 0.35, 0.45], [3, 0.12, 0.3], [4, 0.05, 0.2]];
+  const SALE_SYNTH = {
+    // две быстрые ноты вверх, как монетка в играх, только мягче
+    coin: (ac, out, t, g) => { saleNote(ac, out, t, 987.77, 0.16, SALE_BRIGHT, g * 0.8); saleNote(ac, out, t + 0.085, 1318.51, 0.75, SALE_BRIGHT, g); },
+    // мажорный аккорд по нотам, звонкие обертоны маленького колокольчика
+    bell: (ac, out, t, g) => [1046.5, 1318.51, 1567.98, 2093].forEach((f, i) => saleNote(ac, out, t + i * 0.09, f, 1.5 - i * 0.15, SALE_BELL, g * (i === 3 ? 0.45 : 0.75))),
+    // «ка-чинг»: щелчок кассы и яркий двойной звон
+    till: (ac, out, t, g) => {
+      saleClick(ac, out, t, g);
+      saleNote(ac, out, t + 0.06, 2093, 0.9, SALE_BELL, g * 0.55); saleNote(ac, out, t + 0.06, 2637.02, 0.9, SALE_BELL, g * 0.45);
+      saleNote(ac, out, t + 0.2, 3135.96, 0.7, SALE_BELL, g * 0.3);
+    },
+    // быстрое арпеджио вверх — будто провели пальцем по струнам
+    harp: (ac, out, t, g) => [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1318.51].forEach((f, i) => saleNote(ac, out, t + i * 0.055, f, 1.1, SALE_PLUCK, g * (0.55 + i * 0.05))),
+  };
+  // n продаж разом — звон повторяется (не больше трёх раз). false — браузер не дал звук
+  async function salePlay(n = 1, tone = sale.tone, vol = sale.vol) {
+    const ac = saleCtx();
+    if (!ac) return false;
+    if (ac.state !== 'running') { try { await Promise.race([ac.resume(), sleep(500)]); } catch (e) { /* не разрешили */ } }
+    if (ac.state !== 'running') return false;
+    const out = ac.createGain(), comp = ac.createDynamicsCompressor();
+    out.gain.value = Math.pow(Math.max(0, Math.min(100, vol)) / 100, 1.6) * 0.55;
+    comp.threshold.value = -10; comp.knee.value = 10; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.25;
+    out.connect(comp).connect(ac.destination);
+    out.connect(saleReverb(ac));
+    const t0 = ac.currentTime + 0.03, reps = Math.min(3, Math.max(1, n));
+    for (let k = 0; k < reps; k++) (SALE_SYNTH[tone] || SALE_SYNTH.coin)(ac, out, t0 + k * 0.42, k ? 0.7 : 1);
+    setTimeout(() => { try { out.disconnect(); comp.disconnect(); } catch (e) { /* уже отключено */ } }, (reps * 0.42 + 2.5) * 1000);
+    return true;
+  }
+
+  // ---- что пришло: продажа (class.earning), подарок Points или прочее ----
+  function saleThumb(dev) {
+    try {
+      const m = dev.media, ty = (m.types || []).find((x) => x.t === '200H') || (m.types || []).find((x) => x.t === '150');
+      if (!m.baseUri || !ty || !ty.c) return '';
+      return m.baseUri + ty.c.replace('<prettyName>', m.prettyName || '') + (m.token && m.token[0] ? '?token=' + m.token[0] : '');
+    } catch (e) { return ''; }
+  }
+  // у разных продаж (Exclusive, премиум-загрузка, подписка) данные лежат под разными ключами — ищем заказ вглубь
+  function saleBox(o, depth = 0) {
+    if (!o || typeof o !== 'object' || depth > 3) return null;
+    if (o.order && typeof o.order === 'object') return o;
+    for (const k in o) { const r = saleBox(o[k], depth + 1); if (r) return r; }
+    return null;
+  }
+  function saleParse(m) {
+    if (!m || !m.messageId) return null;
+    const ts = Date.parse(m.ts) || 0, og = m.originator || {}, who = og.username || '', d = m.messageData || {};
+    if (m.messageClass === 'class.earning') {
+      const box = saleBox(d) || {}, o = box.order || {}, dev = o.deviation || {};
+      return { id: m.messageId, f: m.folderId, uid: og.userId || 0, ts, kind: 'sale', who, title: dev.title || o.productName || '', url: dev.url || o.productUrl || '',
+        profit: +(o.profit != null ? o.profit : o.amount) || 0, thumb: saleThumb(dev), thanked: !!box.interactionComment, canThank: !!box.order && !m.orphaned };
+    }
+    const p = d.pointsTransaction;
+    if (p && who && p.points > 0) return { id: m.messageId, ts, kind: 'gift', who, points: p.points };
+    return { id: m.messageId, ts, kind: 'other' };
+  }
+  // свои запросы к DA мимо счётчика лайков (иначе «Hope you like it» в тексте спутает лайкер)
+  async function saleApi(path, opt = {}) {
+    const tok = W.__CSRF_TOKEN__;
+    if (!tok) throw new Error('нет токена DA — обновите страницу');
+    const init = { credentials: 'include', esQuiet: true };
+    let url = '/_puppy/dashared/' + path;
+    if (opt.body) {
+      init.method = 'POST'; init.headers = { 'Content-Type': 'application/json' };
+      init.body = JSON.stringify(Object.assign({}, opt.body, { da_minor_version: DA_V, csrf_token: tok }));
+    } else url += (url.includes('?') ? '&' : '?') + 'da_minor_version=' + DA_V + '&csrf_token=' + encodeURIComponent(tok);
+    const r = await W.fetch(url, init);
+    let j = null;
+    try { j = await r.json(); } catch (e) { /* не JSON — страница ошибки */ }
+    if (!r.ok || !j || j.error || (j.errorCode && j.errorCode !== 0)) {
+      const e = new Error((j && (j.errorDescription || j.error)) || 'HTTP ' + r.status); e.status = r.status; throw e;
+    }
+    return j;
+  }
+  const saleBucket = (cursor) => saleApi('nc/bucket?bucket=bucket.transaction&limit=10' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''));
+
+  // ---- проверка: одна вкладка раз в минуту (кто первый занял очередь), при ошибках — реже ----
+  async function saleCheck() {
+    const j = await saleBucket();
+    const msgs = (j.messages || []).map(saleParse).filter(Boolean);
+    const lastOf = (list) => { const s = list.filter((x) => x.kind === 'sale').sort((a, b) => b.ts - a.ts)[0]; return s ? { title: s.title, ts: s.ts, profit: s.profit } : (null); };
+    const seen = saleJson('saleSeen');
+    // первый раз — запоминаем, что уже есть: старые продажи не звеним и не благодарим
+    if (!seen || !Array.isArray(seen.ids)) {
+      GM_setValue('saleSeen', JSON.stringify({ ids: msgs.map((x) => x.id), ts: Math.max(0, ...msgs.map((x) => x.ts)), last: lastOf(msgs) }));
+      if (salePaint) salePaint();
+      return;
+    }
+    const fresh = msgs.filter((x) => !seen.ids.includes(x.id) && x.ts > seen.ts - 6 * 3600e3);
+    if (!fresh.length) return;
+    seen.ids = [...fresh.map((x) => x.id), ...seen.ids].slice(0, 60);
+    seen.ts = Math.max(seen.ts, ...fresh.map((x) => x.ts));
+    seen.last = lastOf(fresh) || seen.last;
+    GM_setValue('saleSeen', JSON.stringify(seen));
+    if (salePaint) salePaint();
+    // «спасибо» — через 1–3 минуты, как живой человек; продажи старше трёх дней не трогаем
+    if (thx.on) thxAdd(fresh.filter((x) => x.kind === 'sale' && x.canThank && !x.thanked && Date.now() - x.ts < 3 * 864e5), false);
+    const ring = fresh.filter((x) => x.kind === 'sale' || (sale.pts && x.kind === 'gift')).sort((a, b) => b.ts - a.ts);
+    if (sale.on && ring.length) saleRing(ring);
+  }
+  async function saleTick() {
+    saleLoad(); thxLoad();
+    if (!navigator.onLine) return;
+    if (thx.on || saleArr('thxQ').length) await thxTick();
+    if ((!sale.on && !thx.on) || saleBusy) return;
+    const now = Date.now(), last = parseInt(GM_getValue('saleAt', '0'), 10) || 0;
+    if (now - last < SALE_POLL * Math.min(10, 2 ** saleFail)) return;
+    // занимаем очередь и чуть ждём: если в ту же секунду её заняла другая вкладка — уступаем
+    const tag = now + ':' + SALE_TAB;
+    GM_setValue('saleAt', tag);
+    saleBusy = true;
+    try {
+      await sleep(250 + Math.random() * 200);
+      if (GM_getValue('saleAt', '') !== tag) return;
+      await saleCheck(); saleFail = 0;
+    } catch (e) { saleFail = Math.min(4, saleFail + 1); } finally { saleBusy = false; }
+  }
+  // включили звук или «спасибо», когда оба были выключены — начинаем с чистого листа,
+  // чтобы не зазвенеть и не благодарить за продажи, прошедшие, пока всё было выключено
+  const saleRebase = (wasOn) => { if (!wasOn && (sale.on || thx.on)) GM_setValue('saleSeen', ''); };
+
+  // ---- о продаже узнают все вкладки ----
+  const saleDone = new Set();
+  let salePend = null;
+  function saleRing(items) {
+    const r = { id: items.map((x) => x.id).join('|').slice(0, 300), t: Date.now(), items: items.slice(0, 10) };
+    GM_setValue('saleRing', JSON.stringify(r));
+    saleOnRing(r);
+  }
+  function saleOnRing(r) {
+    if (!r || !r.id || saleDone.has(r.id) || Date.now() - r.t > 5 * 60000) return;
+    saleDone.add(r.id);
+    saleLoad();
+    if (!sale.on) return;
+    const vis = document.visibilityState === 'visible';
+    if (vis) saleShow(r); else salePend = r; // фоновая вкладка: плашка дождётся, когда на неё вернутся
+    // звук — одной вкладке: сначала той, на которую смотрят, потом фоновой со звуком, потом остальным по очереди
+    const act = !!(navigator.userActivation && navigator.userActivation.hasBeenActive);
+    const wait = saleCanPlay() ? (vis ? 0 : 250 + Math.random() * 250) : act ? 700 + Math.random() * 300 : 1300 + Math.random() * 1500;
+    let tries = 0;
+    const go = async () => {
+      const st = GM_getValue('saleRang', '');
+      if (st === r.id) return; // уже прозвенела другая вкладка
+      if (st === r.id + '?' && ++tries < 6) { setTimeout(go, 500); return; } // другая как раз пробует
+      GM_setValue('saleRang', r.id + '?');
+      const ok = await salePlay(r.items.length);
+      GM_setValue('saleRang', ok ? r.id : '');
+      if (!ok) GM_setValue('saleMute', r.id);
+    };
+    setTimeout(go, wait);
+  }
+  function saleShow(r) {
+    GM_setValue('saleShown', r.id);
+    saleToast(r.items, { mute: () => GM_getValue('saleMute', '') === r.id && GM_getValue('saleRang', '') !== r.id });
+  }
+
+  // ---- плашка «Продано» справа сверху ----
+  const SALE_CSS = `
+  :host{all:initial}
+  *{box-sizing:border-box;margin:0;padding:0}
+  .wrap{position:fixed;top:72px;right:16px;display:flex;flex-direction:column;align-items:flex-end;gap:10px;pointer-events:none;
+    font:13px/1.35 ${FONTS.sys};--spring:cubic-bezier(.2,1.2,.3,1);--smooth:cubic-bezier(.32,.72,0,1);-webkit-font-smoothing:antialiased}
+  @supports (transition-timing-function:linear(0,1)){.wrap{--spring:linear(0,.009,.035 2.1%,.141 4.4%,.723 12.9%,.938 16.7%,1.017 19.4%,1.067,1.099 24.3%,1.108 26%,1.100 28.4%,1.078 31%,1.004 39.5%,.98 43.1%,.975 47%,.989 56.4%,1.001 66.6%,1.003 75.7%,1)}}
+  .t{--bg:rgba(30,28,34,.8);--text:#f5f5f7;--sub:rgba(235,235,245,.62);--line:rgba(255,255,255,.12);--ring:rgba(30,28,34,1);--ok:#30d158;--amber:#ff9f0a;
+    pointer-events:auto;position:relative;display:flex;align-items:center;gap:13px;width:344px;max-width:calc(100vw - 32px);padding:12px 16px 12px 12px;
+    border-radius:22px;background:var(--bg);color:var(--text);cursor:default;
+    -webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    box-shadow:inset 0 0 0 .5px var(--line),inset 0 1px 0 rgba(255,255,255,.06),0 22px 54px -14px rgba(0,0,0,.5),0 4px 14px rgba(0,0,0,.18);
+    transform-origin:top right;animation:in .8s var(--spring) both}
+  .t[data-theme=light]{--bg:rgba(251,251,253,.84);--text:#1c1c1e;--sub:rgba(60,60,67,.62);--line:rgba(60,60,67,.14);--ring:#fff;--ok:#1f9d48;--amber:#c76a00}
+  .t::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    background:radial-gradient(120% 140% at 0% 0%,rgba(var(--a1rgb,255,45,120),.16),transparent 55%),radial-gradient(90% 120% at 100% 100%,rgba(255,200,60,.12),transparent 60%)}
+  .t.out{animation:out .45s var(--smooth) both}
+  @keyframes in{from{opacity:0;transform:translate3d(28px,-10px,0) scale(.88)}to{opacity:1;transform:none}}
+  @keyframes out{to{opacity:0;transform:translate3d(18px,-6px,0) scale(.94)}}
+  .pic{position:relative;flex:none;width:50px;height:50px;border-radius:13px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--a1,#ff2d78),var(--a2,#a855f7));box-shadow:0 4px 12px -4px rgba(0,0,0,.4)}
+  .pic img{width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block}
+  .coin{position:absolute;right:-7px;bottom:-7px;width:25px;height:25px;border-radius:50%;display:grid;place-items:center;
+    background:radial-gradient(circle at 34% 28%,#fff8cf,#ffd84f 40%,#f3a90a 74%,#c98200);
+    box-shadow:0 0 0 2.5px var(--ring),0 3px 8px rgba(0,0,0,.35),inset 0 -1.5px 0 rgba(140,80,0,.35);animation:flip 1.2s .2s var(--spring) both}
+  .coin b{font:800 13px/1 ${FONTS.sys};color:#8a5300;text-shadow:0 1px 0 rgba(255,255,255,.5)}
+  .pic.solo{background:none;box-shadow:none}
+  .pic.solo .coin{position:static;width:44px;height:44px}
+  .pic.solo .coin b{font-size:21px}
+  @keyframes flip{0%{transform:scale(.3) rotateY(0);opacity:0}55%{transform:scale(1.12) rotateY(560deg);opacity:1}100%{transform:scale(1) rotateY(720deg)}}
+  .sp{position:absolute;right:5px;bottom:5px;width:0;height:0;pointer-events:none}
+  .pic.solo .sp{left:50%;top:50%;right:auto;bottom:auto}
+  .sp i{position:absolute;left:-2.5px;top:-2.5px;width:5px;height:5px;border-radius:50%;background:#ffd84f;box-shadow:0 0 6px #ffd84f;opacity:0;
+    animation:spark .9s calc(.45s + var(--k) * 40ms) cubic-bezier(.2,.7,.3,1) both}
+  @keyframes spark{0%{opacity:0;transform:translate(0,0) scale(.4)}25%{opacity:1}100%{opacity:0;transform:translate(var(--dx),var(--dy)) scale(.2)}}
+  .tx{position:relative;flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+  .h{display:flex;align-items:baseline;gap:8px}
+  .h b{font-size:13.5px;font-weight:700;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .h .m{margin-left:auto;flex:none;font-weight:750;font-variant-numeric:tabular-nums;color:var(--ok);animation:pop .7s .35s var(--spring) both}
+  .h .m.pts{color:var(--amber)}
+  @keyframes pop{from{opacity:0;transform:translateY(6px) scale(.8)}to{opacity:1;transform:none}}
+  .nm{font-weight:600;color:inherit;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  a.nm:hover{text-decoration:underline;text-underline-offset:2px}
+  .tx small{font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tx small.mute{color:var(--amber);white-space:normal}
+  .x{position:absolute;top:-7px;left:-7px;width:22px;height:22px;border:0;border-radius:50%;display:grid;place-items:center;cursor:pointer;
+    background:var(--bg);color:var(--sub);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);
+    box-shadow:inset 0 0 0 .5px var(--line),0 2px 8px rgba(0,0,0,.25);opacity:0;transform:scale(.7);transition:opacity .2s,transform .35s var(--spring)}
+  .x svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round}
+  .t:hover .x,.x:focus-visible{opacity:1;transform:none}
+  @media (prefers-reduced-motion:reduce){.t,.t.out,.coin,.sp i,.h .m{animation-duration:.01s!important;animation-delay:0s!important}}`;
+  let saleHost = null, saleSh = null;
+  function saleToast(items, opt = {}) {
+    if (!saleHost) {
+      saleHost = document.createElement('div');
+      saleHost.id = 'emostudio-sale';
+      saleHost.style.cssText = 'all:initial;position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;';
+      saleSh = saleHost.attachShadow({ mode: 'open' });
+      addCss(saleSh, SALE_CSS);
+      const w = document.createElement('div'); w.className = 'wrap'; saleSh.appendChild(w);
+      guardStyles(saleSh);
+    }
+    if (saleHost.nextSibling || !saleHost.isConnected) document.documentElement.appendChild(saleHost); // последним — поверх панели
+    const wrap = saleSh.querySelector('.wrap');
+    // панель EmoStudio у правого края — плашка встаёт левее неё, чтобы не закрывать (если слева есть место)
+    let right = 16;
+    try {
+      const pr = panel && host && host.style.display !== 'none' ? panel.getBoundingClientRect() : null;
+      if (pr && pr.width && pr.top < 180 && pr.right > innerWidth - 376 && pr.left > 372) right = Math.round(innerWidth - pr.left + 12);
+    } catch (e) { /* панели нет — у края */ }
+    wrap.style.right = right + 'px';
+    const d = decoFor('liker'), v = decoVars(palOf(d.pal, d));
+    for (const k in v) saleHost.style.setProperty(k, v[k]);
+    const sales = items.filter((x) => x.kind === 'sale'), gifts = items.filter((x) => x.kind === 'gift');
+    const money = sales.reduce((s, x) => s + (x.profit || 0), 0), pts = gifts.reduce((s, x) => s + (x.points || 0), 0);
+    const who = [...new Set(items.map((x) => x.who).filter(Boolean))];
+    const away = !opt.test && items.some((x) => x.ts && Date.now() - x.ts > 20 * 60000);
+    const one = sales.length === 1 ? sales[0] : null;
+    const t = document.createElement('div');
+    t.className = 't'; t.setAttribute('role', 'status');
+    t.dataset.theme = (panel && panel.dataset.theme) || 'dark';
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const what = sales.length
+      ? (sales.length > 1 ? 'продано ' + sales.length + ' ' + cmN(sales.length, 'картинка', 'картинки', 'картинок') : away ? 'продано' : 'продано!')
+      : gifts.length > 1 ? gifts.length + ' ' + cmN(gifts.length, 'подарок', 'подарка', 'подарков') : away ? 'подарок' : 'подарок!';
+    const head = away ? 'Пока вас не было: ' + what : what[0].toUpperCase() + what.slice(1);
+    const amount = sales.length ? '+$' + money.toFixed(2) : '+' + pts + ' Points';
+    const name = one ? (one.url ? '<a class="nm" target="_blank" rel="noopener">' + esc(one.title) + '</a>' : '<span class="nm">' + esc(one.title) + '</span>')
+      : sales.length ? '<span class="nm">' + esc(sales.map((x) => x.title).join(', ')) + '</span>'
+        : '<span class="nm">от ' + esc(who.join(', ')) + '</span>';
+    const buyers = [...new Set(sales.map((x) => x.who).filter(Boolean))];
+    const sub = opt.sub || (sales.length ? (buyers.length ? (buyers.length > 1 ? 'покупатели: ' : 'покупатель: ') + buyers.join(', ') : 'Exclusive') + (pts ? ' · ещё +' + pts + ' Points' : '') : 'Points в подарок');
+    const img = one && one.thumb;
+    const sparks = Array.from({ length: 8 }, (_, k) => { const a = k / 8 * Math.PI * 2 + 0.3, r = 20 + (k % 2) * 8; return '<i style="--k:' + k + ';--dx:' + Math.round(Math.cos(a) * r) + 'px;--dy:' + Math.round(Math.sin(a) * r) + 'px"></i>'; }).join('');
+    t.innerHTML = '<button class="x" aria-label="Закрыть"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>'
+      + '<div class="pic' + (img ? '' : ' solo') + '">' + (img ? '<img alt="">' : '') + '<span class="coin"><b>' + (sales.length ? '$' : 'P') + '</b></span><span class="sp">' + sparks + '</span></div>'
+      + '<div class="tx"><div class="h"><b>' + esc(head) + '</b><span class="m' + (sales.length ? '' : ' pts') + '">' + esc(amount) + '</span></div>' + name + '<small>' + esc(sub) + '</small></div>';
+    if (img) t.querySelector('img').src = img;
+    if (one && one.url) t.querySelector('a.nm').href = one.url;
+    const close = () => { if (t.classList.contains('out')) return; t.classList.add('out'); setTimeout(() => t.remove(), 460); };
+    t._close = close;
+    t.querySelector('.x').onclick = close;
+    t.addEventListener('click', (e) => { if (!e.target.closest('a')) close(); });
+    // через пару секунд смотрим, сыграл ли звук; не сыграл — подсказываем, как его разрешить
+    if (opt.mute) setTimeout(() => {
+      if (!t.isConnected || !opt.mute()) return;
+      const s = t.querySelector('small'); s.className = 'mute'; s.textContent = 'звук не сыграл: браузер разрешит его после клика по странице DA';
+    }, 3600);
+    [...wrap.children].slice(0, -1).forEach((o) => o._close && o._close()); // на экране не больше двух плашек
+    wrap.appendChild(t);
+    // висит 9 с, пока на неё не навели мышь
+    let left = 9000, at = Date.now(), tm = setTimeout(close, left);
+    t.addEventListener('mouseenter', () => { clearTimeout(tm); left -= Date.now() - at; });
+    t.addEventListener('mouseleave', () => { at = Date.now(); tm = setTimeout(close, Math.max(2500, left)); });
+  }
+
+  // ======================================================================
+  //  СПАСИБО ЗА ПОКУПКУ: то же, что кнопка «Say Thanks» в уведомлении о продаже —
+  //  комментарий на профиле покупателя, привязанный к уведомлению (там вместо кнопки появится ваш ответ).
+  //  Новые продажи — сами через 1–3 минуты; старые без ответа — кнопкой «Поблагодарить всех без ответа».
+  //  Отправляет по одному «спасибо» раз в 30–45 с, чтобы DA не принял за спам
+  // ======================================================================
+  const THX_TEXTS = [
+    'Thank you so much for the purchase! 💖',
+    'Thank you for getting {title}! Hope you enjoy it ✨',
+    'Thanks a lot for the support, it really means a lot! 🙏',
+    'Thank you so much, {name}! Enjoy {title} 💜',
+    'Thank you for buying {title}! Your support keeps me creating 🥰',
+    'Huge thanks for the purchase! 🌸',
+  ];
+  // один покупатель купил сразу несколько — одно «спасибо» за все (семь одинаковых комментариев на профиль — это спам)
+  const THX_MULTI = [
+    'Thank you so much for all the purchases, {name}! 💖',
+    'Wow, thank you for picking up {n} of my works! 🥰',
+    'Thanks a lot for all your support, {name}, it really means a lot! 🙏',
+  ];
+  let thx = { on: false, texts: THX_TEXTS.join('\n') };
+  const thxLoad = () => { try { Object.assign(thx, JSON.parse(GM_getValue('thx', '{}')) || {}); } catch (e) { /* по умолчанию */ } };
+  thxLoad();
+  const thxSave = () => GM_setValue('thx', JSON.stringify(thx));
+  let thxPaint = null, thxBusy = false;
+  const thxLines = () => String(thx.texts || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  // случайный текст, не тот же, что в прошлый раз; {name} — ник покупателя, {title} — название картинки
+  function thxText(it, n = 1) {
+    const list = n > 1 ? THX_MULTI : thxLines().length ? thxLines() : THX_TEXTS;
+    const prev = GM_getValue('thxPrev', ''), pool = list.length > 1 ? list.filter((s) => s !== prev) : list;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    GM_setValue('thxPrev', pick);
+    return pick.replace(/\{n\}/gi, String(n)).replace(/\{name\}/gi, it.who || '').replace(/\{title\}/gi, it.title || 'it').replace(/\s{2,}/g, ' ').replace(/\s+([!,.?])/g, '$1').trim();
+  }
+  // текст комментария в формате редактора DA (TipTap)
+  const thxDoc = (text) => JSON.stringify({ version: '1', document: { type: 'doc', content: text.split('\n').map((ln) => ({
+    type: 'paragraph', attrs: { indentType: null, indentation: null }, content: ln ? [{ type: 'text', marks: [{ type: 'textStyle' }], text: ln }] : [],
+  })) }, features: [] });
+  const thxPost = (it, text) => saleApi('comments/post', { body: { typeid: 4, itemid: it.uid, mcid: it.id, folderid: it.f, editorRaw: thxDoc(text) } });
+  // очередь общая для всех вкладок: { id, f, uid, who, title, due, man }
+  function thxAdd(items, man) {
+    if (!items.length) return 0;
+    const q = saleArr('thxQ'), done = saleArr('thxDone'), now = Date.now();
+    const add = items.filter((x) => x.uid && !done.includes(x.id) && !q.some((y) => y.id === x.id))
+      .map((x) => ({ id: x.id, f: x.f, uid: x.uid, who: x.who, title: x.title, ts: x.ts || 0, due: man ? now : now + (60 + Math.random() * 120) * 1000, man: !!man }));
+    if (add.length) { GM_setValue('thxQ', JSON.stringify([...q, ...add])); if (thxPaint) thxPaint(); }
+    return add.length;
+  }
+  const thxMark = (id, rec) => {
+    GM_setValue('thxDone', JSON.stringify([id, ...saleArr('thxDone').filter((x) => x !== id)].slice(0, 300)));
+    if (rec) GM_setValue('thxLog', JSON.stringify([rec, ...saleArr('thxLog')].slice(0, 5)));
+  };
+  // продажи без «спасибо» в последних pages страницах уведомлений
+  async function thxScan(pages = 5) {
+    const out = [], done = saleArr('thxDone'), q = saleArr('thxQ');
+    let cursor = '';
+    for (let p = 0; p < pages; p++) {
+      const j = await saleBucket(cursor);
+      (j.messages || []).map(saleParse).filter(Boolean).forEach((x) => {
+        if (x.kind === 'sale' && x.canThank && !x.thanked && x.uid && !done.includes(x.id) && !q.some((y) => y.id === x.id)) out.push(x);
+      });
+      if (!j.hasMore || !j.cursor) break;
+      cursor = j.cursor;
+      await sleep(600 + Math.random() * 600);
+    }
+    return out;
+  }
+  async function thxTick() {
+    if (thxBusy) return;
+    const now = Date.now();
+    let q = saleArr('thxQ');
+    if (!thx.on && q.some((x) => !x.man)) { q = q.filter((x) => x.man); GM_setValue('thxQ', JSON.stringify(q)); if (thxPaint) thxPaint(); } // выключили — новые не шлём
+    const it = q.filter((x) => x.due <= now).sort((a, b) => a.due - b.due)[0];
+    if (!it || now < +GM_getValue('thxNext', 0)) return;
+    const tag = now + ':' + SALE_TAB;
+    GM_setValue('thxAt', tag);
+    thxBusy = true;
+    try {
+      await sleep(300 + Math.random() * 200);
+      if (GM_getValue('thxAt', '') !== tag || now < +GM_getValue('thxNext', 0)) return; // ведёт другая вкладка
+      if (!saleArr('thxQ').some((x) => x.id === it.id)) return;
+      GM_setValue('thxNext', now + (30 + Math.random() * 15) * 1000);
+      // все продажи этого покупателя из очереди — одним «спасибо», привязанным к самой новой
+      const qq = saleArr('thxQ'), done = saleArr('thxDone');
+      const group = qq.filter((x) => x.uid === it.uid && !done.includes(x.id));
+      GM_setValue('thxQ', JSON.stringify(qq.filter((x) => x.uid !== it.uid)));
+      if (!group.length) return;
+      const ids = group.map((x) => x.id), n = group.length;
+      const main = group.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
+      const label = n > 1 ? 'за ' + n + ' ' + cmN(n, 'покупку', 'покупки', 'покупок') : '«' + (main.title || 'картинка') + '»';
+      // этого покупателя скрипт уже благодарил за последние 12 часов — второй раз подряд не пишем
+      const recent = saleJson('thxBuyers') || {};
+      if (now - (recent[main.uid] || 0) < 12 * 3600e3) { ids.forEach((id) => thxMark(id)); return; }
+      // новая продажа: вдруг вы уже ответили сами, пока ждали
+      if (!main.man) {
+        try {
+          const j = await saleBucket(), list = (j.messages || []).map(saleParse).filter(Boolean);
+          if (list.some((x) => ids.includes(x.id) && x.thanked)) { ids.forEach((id) => thxMark(id)); return; }
+        } catch (e) { /* проверить не вышло — всё равно благодарим */ }
+      }
+      const text = thxText(main, n);
+      const back = (due, extra) => GM_setValue('thxQ', JSON.stringify([...group.map((x) => ({ ...x, due, ...extra })), ...saleArr('thxQ')]));
+      try {
+        await thxPost(main, text);
+        ids.forEach((id) => thxMark(id));
+        thxMark(main.id, { who: main.who, title: label, t: Date.now(), ok: 1 });
+        recent[main.uid] = Date.now();
+        for (const k in recent) if (Date.now() - recent[k] > 864e5) delete recent[k];
+        GM_setValue('thxBuyers', JSON.stringify(recent));
+        if (panel) status('Спасибо отправлено: ' + main.who + ' — ' + label, 'ok');
+      } catch (e) {
+        const msg = String(e.message || e);
+        // DA просит притормозить — ждём полчаса и пробуем снова
+        if (e.status === 403 || e.status === 429 || /flood|too many|limit|spam|slow/i.test(msg)) {
+          GM_setValue('thxNext', Date.now() + 30 * 60000);
+          back(Date.now() + 30 * 60000, {});
+          if (panel) status('DA просит притормозить с комментариями — «спасибо» продолжу через 30 минут', 'err');
+        } else if ((!e.status || e.status >= 500) && (main.tries || 0) < 2) {
+          back(Date.now() + 5 * 60000, { tries: (main.tries || 0) + 1 });
+        } else {
+          ids.forEach((id) => thxMark(id));
+          thxMark(main.id, { who: main.who, title: label, t: Date.now(), ok: 0, err: msg.slice(0, 80) });
+          if (panel) status('Не вышло поблагодарить ' + main.who + ': ' + msg.slice(0, 80), 'err');
+        }
+      }
+    } finally { thxBusy = false; if (thxPaint) thxPaint(); }
+  }
+
+  function saleInit() {
+    ['pointerdown', 'keydown', 'touchend'].forEach((e) => document.addEventListener(e, saleUnlock, { capture: true, passive: true }));
+    if (typeof GM_addValueChangeListener === 'function') {
+      GM_addValueChangeListener('saleRing', (k, o, v, remote) => { if (remote) { try { saleOnRing(JSON.parse(v)); } catch (e) { /* не продажа */ } } });
+    } else {
+      let seenRing = GM_getValue('saleRing', '');
+      setInterval(() => { const v = GM_getValue('saleRing', ''); if (v !== seenRing) { seenRing = v; saleOnRing(saleJson('saleRing')); } }, 2000);
+    }
+    // вернулись на вкладку — показываем продажу, которую ещё ни одна вкладка не показала
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden || !salePend) return;
+      const r = salePend; salePend = null;
+      if (Date.now() - r.t < 15 * 60000 && GM_getValue('saleShown', '') !== r.id) saleShow(r);
+    });
+    (async () => { await sleep(4000 + Math.random() * 3000); for (;;) { try { await saleTick(); } catch (e) { /* следующий круг */ } await sleep(15000 + Math.random() * 5000); } })();
   }
 
   // ======================================================================
