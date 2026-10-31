@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.15.0
+// @version      1.15.1
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -1705,33 +1705,86 @@
     }
     if (!cal) { const dg = {}; calFind(dg); return { ok: false, reason: 'Календарь не найден (чисел на экране: ' + (dg.leafs || 0) + ')' }; }
 
-    // листаем до нужного месяца
+    // Календарь DA (react-day-picker) листает месяцы с анимацией: ~0.3–0.5 с на странице висят два месяца сразу —
+    // уходящий и новый. Читать его в этот момент нельзя: скрипт видел старый месяц, листал ещё раз и гонял календарь
+    // туда-сюда (особенно в конце месяца и на медленных компьютерах). Поэтому ждём, пока календарь «успокоится»:
+    // одна сетка и тот же месяц два раза подряд
     const mk = (c) => (c && c.known ? c.y * 12 + c.mo : null);
     const goal = p.y * 12 + (p.mo - 1), nowD = new Date();
-    let guess = null, stuck = 0;
-    for (let i = 0; i < 40; i++) {
-      cal = calFind();
-      if (!cal) return { ok: false, reason: 'Календарь пропал' };
-      let cur = mk(cal);
-      if (cur == null) { if (guess == null) guess = nowD.getFullYear() * 12 + nowD.getMonth(); cur = guess; } // шапку не прочли: календарь открывается на текущем месяце
-      const diff = goal - cur;
-      if (!diff) break;
-      const nav = calNav(cal.box, cal.cells), b = diff > 0 ? nav.next : nav.prev;
-      if (!b || isOff(b)) return { ok: false, reason: 'Не могу листать месяцы: кнопка «' + (diff > 0 ? 'вперёд' : 'назад') + '» не найдена или неактивна' };
-      const k0 = mk(cal);
-      schPress(b);
-      if (k0 == null) { guess += diff > 0 ? 1 : -1; await sleep(400); }
-      else {
-        const ch = await schWait(() => { const c = calFind(); return !c || mk(c) !== k0; }, 1500);
-        if (!ch && ++stuck >= 3) return { ok: false, reason: 'Кнопка листания месяцев не срабатывает' };
-        await sleep(150);
+    const calSettle = async (ms = 2500) => {
+      let prev = '';
+      for (const end = Date.now() + ms; Date.now() < end;) {
+        const c = calFind();
+        const k = c ? (mk(c) == null ? '?' : mk(c)) + ':' + c.cells.length : '';
+        if (k && k === prev && document.querySelectorAll('[data-animated-month]').length <= 1) return c;
+        prev = k;
+        await sleep(130);
       }
+      return calFind();
+    };
+    // выпадающие «месяц» и «год» в шапке календаря
+    const selNear = (box, ok) => {
+      for (let n = box, i = 0; n && n !== document.body && i < 6; n = n.parentElement, i++) {
+        const s = [...n.querySelectorAll('select')].find((x) => !inHost(x) && ok(x));
+        if (s) return s;
+      }
+      return null;
+    };
+    const isMonthSel = (s) => s.options.length === 12 && monthIdx(s.options[0].textContent) === 0 && monthIdx(s.options[11].textContent) === 11;
+    const isYearSel = (s) => s.options.length > 0 && s.options.length < 30 && [...s.options].every((o) => /^\s*20\d\d\s*$/.test(o.textContent));
+    const setSel = (s, v) => {
+      const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(s), 'value') || Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+      if (d && d.set) d.set.call(s, String(v)); else s.value = String(v);
+      s.dispatchEvent(new Event('input', { bubbles: true }));
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    // ставим нужный месяц: сначала через выпадающие списки (сразу, без листания), иначе стрелками — по шагу,
+    // каждый раз дожидаясь конца анимации
+    async function goMonth() {
+      let c = await calSettle();
+      if (!c) return { ok: false, reason: 'Календарь пропал' };
+      if (mk(c) === goal) return { ok: true };
+      const ys = selNear(c.box, isYearSel);
+      if (ys && +ys.value !== p.y) {
+        const o = [...ys.options].find((x) => x.textContent.trim() === String(p.y));
+        if (o && !o.disabled) { setSel(ys, o.value); c = (await calSettle()) || c; }
+      }
+      const ms = selNear(c.box, isMonthSel);
+      if (ms) {
+        const o = [...ms.options].find((x) => monthIdx(x.textContent) === p.mo - 1);
+        if (o && !o.disabled) {
+          setSel(ms, o.value);
+          c = await calSettle();
+          if (c && mk(c) === goal) return { ok: true };
+        }
+      }
+      let guess = null, stuck = 0, lastDir = 0, flips = 0;
+      for (let i = 0; i < 30; i++) {
+        c = await calSettle();
+        if (!c) return { ok: false, reason: 'Календарь пропал' };
+        let cur = mk(c);
+        if (cur == null) { if (guess == null) guess = nowD.getFullYear() * 12 + nowD.getMonth(); cur = guess; } // шапку не прочли: календарь открывается на текущем месяце
+        const diff = goal - cur;
+        if (!diff) return { ok: true };
+        const dir = diff > 0 ? 1 : -1;
+        if (lastDir && dir !== lastDir && ++flips > 2) return { ok: false, reason: 'Календарь листается туда-сюда и не встаёт на нужный месяц' };
+        lastDir = dir;
+        const nav = calNav(c.box, c.cells), b = dir > 0 ? nav.next : nav.prev;
+        if (!b || isOff(b)) return { ok: false, reason: 'Не могу листать месяцы: кнопка «' + (dir > 0 ? 'вперёд' : 'назад') + '» не найдена или неактивна' };
+        const k0 = mk(c);
+        schPress(b);
+        if (k0 == null) { guess += dir; await sleep(450); continue; }
+        const ch = await schWait(() => { const x = calFind(); return x && mk(x) !== k0 && document.querySelectorAll('[data-animated-month]').length <= 1; }, 2500);
+        if (!ch && ++stuck >= 3) return { ok: false, reason: 'Кнопка листания месяцев не срабатывает' };
+      }
+      return { ok: false, reason: 'Не получилось долистать календарь до нужного месяца' };
     }
+    const gm = await goMonth();
+    if (!gm.ok) return gm;
 
-    // находим нужный день
+    // находим нужный день — только в «успокоившемся» календаре нужного месяца
     const want = String(p.d);
-    const findCell = () => {
-      const c = calFind();
+    const findCell = (c) => {
       if (!c || (mk(c) != null && mk(c) !== goal)) return null;
       const same = c.cells.filter((l) => l.textContent.trim() === want);
       if (!same.length) return null;
@@ -1743,11 +1796,14 @@
     const applied = () => !trigger.isConnected || (hasPh ? !PLACEHOLDER_RE.test(normTxt(trigger)) : !calFind());
     let okDate = false;
     for (let a = 0; a < 3 && !okDate; a++) {
-      let t = findCell();
-      if (!t) {                                   // календарь закрылся или перерисовался
-        if (!expanded()) schPress(trigger);
-        await schWait(calFind, 2000);
-        t = findCell();
+      let t = findCell(await calSettle(1500));
+      if (!t) {
+        // календарь закрылся — открываем заново (он откроется на текущем месяце) и снова ставим месяц.
+        // Пока он открыт, по полю даты не жмём: повторный клик его закрывал, и календарь мигал туда-сюда
+        if (!calFind()) { schPress(trigger); await schWait(calFind, 2000); }
+        const g2 = await goMonth();
+        if (!g2.ok) return g2;
+        t = findCell(await calSettle(1500));
         if (!t) break;
       }
       if (a === 2) schKey(t.target, 'Enter'); else schPress(a === 1 ? t.cell : t.target);
