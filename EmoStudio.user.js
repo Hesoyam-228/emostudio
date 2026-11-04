@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.15.1
+// @version      1.15.2
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -3933,6 +3933,23 @@
   .rn-msg{margin-top:6px}
   .rn-msg.err{color:var(--err)}
   .rn-msg.ok{color:var(--ok)}
+  .snd{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .sc{position:relative;flex:0 1 auto;max-width:100%;display:flex;align-items:center;gap:5px;min-width:0;padding:6px 10px 6px 8px;border-radius:99px;background:var(--tile);
+    font-size:12px;font-weight:600;text-align:left;transition:transform .35s var(--spring),background .25s,box-shadow .25s}
+  .sc i{flex:none;font-style:normal;font-size:14px;line-height:1}
+  .sc span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sc:active{transform:scale(.94)}
+  .sc[aria-selected=true]{background:linear-gradient(135deg,rgba(var(--a1rgb),.26),rgba(var(--a2rgb),.2));box-shadow:inset 0 0 0 1.5px rgba(var(--a1rgb),.75)}
+  .sc.play i{animation:scPlay .6s var(--spring)}
+  @keyframes scPlay{40%{transform:scale(1.4) rotate(-12deg)}}
+  .sc.add{justify-content:center;background:transparent;box-shadow:inset 0 0 0 1.5px var(--track);color:var(--sub)}
+  .sc.add:hover{color:var(--text);box-shadow:inset 0 0 0 1.5px rgba(var(--a1rgb),.6)}
+  .sc .sx{margin-left:auto;flex:none;width:17px;height:17px;border-radius:50%;display:grid;place-items:center;font-size:12px;line-height:1;color:var(--sub);background:var(--tile);opacity:.55;transition:opacity .2s,background .2s}
+  .sc:hover .sx{opacity:1}
+  .sc .sx:hover{background:var(--err);color:#fff}
+  .snd-test{display:inline-flex;align-items:center;gap:4px;padding:5px 11px 5px 8px}
+  .snd-test svg{width:12px;height:12px;fill:currentColor}
+  #saleFold .rl{align-items:center}
   .card.sw{padding:12px 14px;margin-bottom:10px;background:rgba(255,159,10,.15);animation:swap .4s var(--smooth)}
   .sw-h{display:flex;justify-content:space-between;align-items:center;gap:8px}
   .sw-dots{display:flex;gap:4px}
@@ -4497,22 +4514,28 @@
             <div class="row inline"><div><span>Звук при покупке</span><small id="saleSub">купили картинку — приятный звук и плашка</small></div>
               <label class="switch"><input id="saleOn" type="checkbox" aria-label="Звук при покупке"><i></i></label></div>
             <div class="fold off" id="saleFold"><div>
-              <div class="row inline"><div><span>Звук</span><small>выберите — сразу услышите</small></div><span id="saleTone"></span></div>
+              <div class="row">
+                <div class="rl"><span>Звук</span><button class="pbtn snd-test" id="saleTest" title="Сыграть и показать плашку «Продано»"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5z"/></svg>Проверить</button></div>
+                <div class="snd" id="saleSnd" role="listbox" aria-label="Звук продажи"></div>
+                <small class="rn-msg" id="saleSndMsg">нажмите — услышите. «Свой звук» — mp3, wav или ogg до 1 МБ</small>
+                <input type="file" id="saleFile" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm" hidden>
+              </div>
               <div class="row"><div class="rl"><span>Громкость</span><output id="saleVolV"></output></div>
                 <input id="saleVol" type="range" min="5" max="100" step="5" aria-label="Громкость звука продажи"></div>
               <div class="row inline"><div><span>Подарки Points</span><small>звенеть и когда дарят Points</small></div>
                 <label class="switch"><input id="salePts" type="checkbox" aria-label="Звенеть за подарки Points"><i></i></label></div>
-              <button class="lrow" id="saleTest">
-                <span class="ico amber"><svg viewBox="0 0 24 24"><path d="M6.5 16.5h11l-1.4-2.2V10a4.1 4.1 0 00-8.2 0v4.3z"/><path d="M10.2 19.2a1.9 1.9 0 003.6 0"/></svg></span>
-                <span class="lt"><b>Проверить звук</b><small>сыграть и показать плашку «Продано»</small></span>
-              </button>
             </div></div>
             <div class="row inline"><div><span>Благодарить за покупку</span><small id="thxSub">сам напишет покупателю «спасибо»</small></div>
               <label class="switch"><input id="thxOn" type="checkbox" aria-label="Благодарить за покупку"><i></i></label></div>
             <div class="fold off" id="thxFold"><div>
-              <div class="row"><div class="rl"><span>Тексты «спасибо»</span><output id="thxTxtN"></output></div>
-                <textarea class="rn-text" id="thxTexts" rows="5" spellcheck="false" aria-label="Тексты благодарности"></textarea>
-                <small class="rn-msg">по одному в строке, каждый раз — случайный. {name} — ник покупателя, {title} — название картинки</small></div>
+              <button class="lrow" id="thxTxtBtn" aria-expanded="false">
+                <span class="ico violet"><svg viewBox="0 0 24 24"><path d="M5 18.5l.9-3.6L15.6 5.2a1.8 1.8 0 012.6 0l.6.6a1.8 1.8 0 010 2.6L9.1 18.1z"/><path d="M13.8 7l3.2 3.2"/></svg></span>
+                <span class="lt"><b>Тексты «спасибо»</b><small id="thxTxtN"></small></span>${CHEV}
+              </button>
+              <div class="fold off" id="thxTxtFold"><div>
+                <div class="row"><textarea class="rn-text" id="thxTexts" rows="5" spellcheck="false" aria-label="Тексты благодарности"></textarea>
+                  <small class="rn-msg">по одному в строке, каждый раз — случайный. {name} — ник покупателя, {title} — название картинки</small></div>
+              </div></div>
             </div></div>
             <button class="lrow" id="thxAll">
               <span class="ico pink"><svg viewBox="0 0 24 24"><path d="M12 19.5s-7.5-4.4-7.5-9.6A4.1 4.1 0 0112 7.6a4.1 4.1 0 017.5 2.3c0 5.2-7.5 9.6-7.5 9.6z"/></svg></span>
@@ -5187,9 +5210,48 @@
     // ---- продажи: звук «Продано» и «спасибо» покупателям ----
     const saleSw = $('#saleOn'), saleFold = $('#saleFold'), thxSw = $('#thxOn'), thxFold = $('#thxFold');
     const thxAllBtn = $('#thxAll'), thxAllT = $('#thxAllT'), thxAllSub = $('#thxAllSub'), thxTexts = $('#thxTexts');
-    const saleToneCs = csMake(SALE_TONES, sale.tone, (v) => { sale.tone = v; saleSave(); salePlay(1, v); }, 'Звук продажи');
-    $('#saleTone').replaceWith(saleToneCs.btn);
     const saleVol = $('#saleVol'), saleVolV = $('#saleVolV');
+    // сетка звуков: нажали — выбрали и услышали; свои звуки с крестиком; «Свой звук» — загрузить файл
+    const sndBox = $('#saleSnd'), sndMsg = $('#saleSndMsg'), sndFile = $('#saleFile'), sndMsg0 = sndMsg.textContent;
+    const escH = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    let sndSig = '';
+    const sndPaint = () => {
+      const own = saleSndIdx();
+      sndSig = sale.tone + '|' + own.map((x) => x.id).join(',');
+      const items = SALE_TONES.map(([v, n, e]) => ({ v, n, e })).concat(own.map((x) => ({ v: 'u:' + x.id, n: x.n, e: '🎧', del: x.id })));
+      if (!items.some((x) => x.v === sale.tone)) { sale.tone = 'coin'; saleSave(); }
+      sndBox.innerHTML = items.map((x) => '<button class="sc" role="option" data-v="' + escH(x.v) + '" aria-selected="' + (x.v === sale.tone) + '" title="' + escH(x.n) + '"><i>' + x.e + '</i><span>' + escH(x.n) + '</span>'
+        + (x.del ? '<span class="sx" data-del="' + escH(x.del) + '" title="Удалить звук">×</span>' : '') + '</button>').join('')
+        + (own.length < SALE_SND_N ? '<button class="sc add" data-add="1" title="Загрузить свой звук: mp3, wav или ogg до 1 МБ"><i>＋</i><span>Свой звук</span></button>' : '');
+    };
+    const sndNote = (t, k) => { sndMsg.textContent = t; sndMsg.className = 'rn-msg' + (k ? ' ' + k : ''); clearTimeout(sndNote.t); sndNote.t = setTimeout(() => { sndMsg.textContent = sndMsg0; sndMsg.className = 'rn-msg'; }, 6000); };
+    sndBox.onclick = async (e) => {
+      const del = e.target.closest('[data-del]');
+      if (del) {
+        e.stopPropagation();
+        const it = saleSndIdx().find((x) => x.id === del.dataset.del);
+        saleSndDel(del.dataset.del); sndPaint(); sndNote('удалил «' + (it ? it.n : 'звук') + '»', 'ok');
+        return;
+      }
+      const b = e.target.closest('.sc');
+      if (!b) return;
+      if (b.dataset.add) { sndFile.click(); return; }
+      sale.tone = b.dataset.v; saleSave(); sndPaint();
+      const nb = [...sndBox.children].find((x) => x.dataset.v === sale.tone);
+      if (nb) { nb.classList.add('play'); setTimeout(() => nb.classList.remove('play'), 650); }
+      if (!(await salePlay(1, sale.tone))) sndNote('браузер не дал звук — кликните по странице и нажмите ещё раз', 'err');
+    };
+    sndFile.onchange = async () => {
+      const f = sndFile.files && sndFile.files[0];
+      sndFile.value = '';
+      if (!f) return;
+      sndNote('загружаю «' + f.name + '»…');
+      const r = await saleSndAdd(f);
+      if (!r.ok) { sndNote(r.msg, 'err'); return; }
+      sale.tone = 'u:' + r.id; saleSave(); sndPaint(); salePlay(1);
+      sndNote('добавил «' + r.n + '» и выбрал его' + (r.long ? ' — звук длинный, сыграю первые ' + SALE_MAX_SEC + ' с' : ''), 'ok');
+    };
+    sndPaint();
     const ago = (ms) => {
       const m = Math.round((Date.now() - ms) / 60000), p = partsIn(ms, 'local');
       return m < 1 ? 'только что' : m < 60 ? m + ' мин назад' : dayWord(ms).toLowerCase() + ' в ' + fmt12(p.h, p.mi);
@@ -5208,28 +5270,41 @@
       $('#thxSub').textContent = q.length ? 'в очереди: ' + ppl(q) + ' ' + cmN(ppl(q), 'покупатель', 'покупателя', 'покупателей') + ' · по одному раз в 30–45 с'
         : log && Date.now() - log.t < 864e5 ? (log.ok ? 'последнее «спасибо»: ' + log.who + ', ' + ago(log.t) : 'не вышло: ' + log.who + ' — ' + (log.err || 'ошибка DA'))
           : thx.on ? 'новым покупателям — через 1–3 минуты' : 'сам напишет покупателю «спасибо»';
-      $('#thxTxtN').textContent = thxLines().length ? thxLines().length + ' шт.' : 'стандартные';
+      const tn = thxLines().length;
+      $('#thxTxtN').textContent = (tn ? tn + ' ' + cmN(tn, 'текст', 'текста', 'текстов') : 'стандартные') + ' · каждый раз случайный';
       if (thxArm || thxScanning) return;
       thxAllBtn.classList.toggle('arm', !!man);
       thxAllT.textContent = man ? 'Остановить — осталось ' + man : 'Поблагодарить всех без ответа';
       thxAllSub.textContent = man ? 'оставшимся «спасибо» не отправлю' : 'найду продажи без «спасибо» и отвечу каждому';
     };
-    saleVol.value = sale.vol; saleVolV.textContent = sale.vol + '%';
+    saleVol.value = sale.vol; saleVolV.textContent = sale.vol + '%'; fill(saleVol);
     $('#salePts').checked = !!sale.pts;
     thxTexts.value = thxLines().length ? thxLines().join('\n') : THX_TEXTS.join('\n');
     salePaint(); thxPaint();
-    setInterval(() => { saleLoad(); thxLoad(); salePaint(); thxPaint(); }, 5000);
+    setInterval(() => {
+      saleLoad(); thxLoad(); salePaint(); thxPaint();
+      if (sale.tone + '|' + saleSndIdx().map((x) => x.id).join(',') !== sndSig) sndPaint(); // поменяли в другой вкладке
+    }, 5000);
+    const thxTxtBtn = $('#thxTxtBtn'), thxTxtFold = $('#thxTxtFold');
+    thxTxtFold.inert = true;
+    thxTxtBtn.onclick = () => {
+      const on = thxTxtFold.classList.contains('off');
+      thxTxtFold.classList.toggle('off', !on); thxTxtFold.inert = !on;
+      thxTxtBtn.classList.toggle('open', on); thxTxtBtn.setAttribute('aria-expanded', String(on));
+      if (on) setTimeout(() => thxTexts.focus({ preventScroll: true }), 350);
+    };
     saleSw.onchange = () => {
       const was = sale.on || thx.on;
       sale.on = saleSw.checked; saleSave(); saleRebase(was); salePaint();
       if (sale.on) saleUnlock();
       status(sale.on ? 'Звук продаж включён: «дзынь» и плашка при каждой покупке, пока открыта любая вкладка DA' : 'Звук продаж выключен', 'ok');
     };
-    saleVol.oninput = () => { saleVolV.textContent = saleVol.value + '%'; };
+    saleVol.oninput = () => { saleVolV.textContent = saleVol.value + '%'; fill(saleVol); };
     saleVol.onchange = () => { sale.vol = +saleVol.value; saleSave(); salePlay(1); };
     $('#salePts').onchange = (e) => { sale.pts = e.target.checked; saleSave(); };
     $('#saleTest').onclick = async () => {
-      const ok = await salePlay(1), tn = (SALE_TONES.find((x) => x[0] === sale.tone) || SALE_TONES[0])[1];
+      const own = saleSndIdx().find((x) => 'u:' + x.id === sale.tone);
+      const ok = await salePlay(1), tn = own ? own.n : (SALE_TONES.find((x) => x[0] === sale.tone) || SALE_TONES[0])[1];
       saleToast([{ kind: 'sale', title: 'Так прозвучит покупка', profit: 4.89, who: '' }],
         { test: true, sub: ok ? 'проверка · звук «' + tn + '», громкость ' + sale.vol + '%' : 'браузер не дал звук — кликните по странице и нажмите ещё раз' });
     };
@@ -8554,7 +8629,10 @@
   const saleLoad = () => { try { Object.assign(sale, JSON.parse(GM_getValue('sale', '{}')) || {}); } catch (e) { /* по умолчанию */ } };
   saleLoad();
   const saleSave = () => GM_setValue('sale', JSON.stringify(sale));
-  const SALE_TONES = [['coin', 'Монетка'], ['bell', 'Колокольчик'], ['till', 'Касса'], ['harp', 'Арфа']];
+  const SALE_TONES = [['coin', 'Монетка', '💰'], ['bell', 'Колокольчик', '🔔'], ['till', 'Касса', '💵'], ['harp', 'Арфа', '🎵'],
+    ['chime', 'Ветерок', '🎐'], ['level', 'Уровень', '🎮'], ['pop', 'Пузырь', '🎈'], ['magic', 'Магия', '✨'], ['marimba', 'Маримба', '🎹'],
+    ['kalimba', 'Калимба', '🎶'], ['tada', 'Та-да!', '🎺'], ['drop', 'Капля', '💧'], ['gem', 'Кристалл', '💎']];
+  const SALE_MAX_SEC = 8; // свой звук длиннее — играем только начало, чтобы не орал минуту
   const SALE_POLL = 60000;
   const SALE_TAB = Math.random().toString(36).slice(2, 10);
   const saleJson = (k) => { try { return JSON.parse(GM_getValue(k, '') || 'null'); } catch (e) { return null; } };
@@ -8592,16 +8670,25 @@
     return (saleVerb = cv);
   }
   // одна нота из нескольких синусов-обертонов [кратность, громкость, доля длины]: мягкая атака, долгое затухание
-  function saleNote(ac, out, t, f, dur, parts, g) {
+  function saleNote(ac, out, t, f, dur, parts, g, type) {
     parts.forEach(([r, a, dk]) => {
       const o = ac.createOscillator(), gn = ac.createGain(), end = t + dur * (dk || 1);
-      o.type = 'sine'; o.frequency.value = f * r;
+      o.type = type || 'sine'; o.frequency.value = f * r;
       gn.gain.setValueAtTime(0.0001, t);
       gn.gain.exponentialRampToValueAtTime(Math.max(0.0002, g * a), t + 0.006);
       gn.gain.exponentialRampToValueAtTime(0.0001, end);
       o.connect(gn).connect(out);
       o.start(t); o.stop(end + 0.05);
     });
+  }
+  // тон, который плавно скользит вверх или вниз — пузырёк, капля
+  function saleSweep(ac, out, t, f1, f2, dur, g) {
+    const o = ac.createOscillator(), gn = ac.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(f1, t); o.frequency.exponentialRampToValueAtTime(f2, t + dur * 0.6);
+    gn.gain.setValueAtTime(0.0001, t); gn.gain.exponentialRampToValueAtTime(Math.max(0.0002, g), t + 0.01); gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(gn).connect(out);
+    o.start(t); o.stop(t + dur + 0.05);
   }
   // короткий щелчок — как выдвигается ящик кассы
   function saleClick(ac, out, t, g) {
@@ -8615,6 +8702,9 @@
   const SALE_BRIGHT = [[1, 1], [2, 0.16, 0.6], [3, 0.05, 0.35]];
   const SALE_BELL = [[1, 1], [2.76, 0.22, 0.4], [5.4, 0.07, 0.22], [0.5, 0.1, 1]];
   const SALE_PLUCK = [[1, 1], [2, 0.35, 0.45], [3, 0.12, 0.3], [4, 0.05, 0.2]];
+  const SALE_MALLET = [[1, 1], [4, 0.22, 0.12], [10, 0.05, 0.05]];
+  const SALE_TINE = [[1, 1], [5.4, 0.12, 0.15], [2, 0.08, 0.5]];
+  const SALE_BRASS = [[1, 1], [2, 0.4, 0.9], [3, 0.2, 0.8], [4, 0.08, 0.7]];
   const SALE_SYNTH = {
     // две быстрые ноты вверх, как монетка в играх, только мягче
     coin: (ac, out, t, g) => { saleNote(ac, out, t, 987.77, 0.16, SALE_BRIGHT, g * 0.8); saleNote(ac, out, t + 0.085, 1318.51, 0.75, SALE_BRIGHT, g); },
@@ -8628,7 +8718,71 @@
     },
     // быстрое арпеджио вверх — будто провели пальцем по струнам
     harp: (ac, out, t, g) => [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1318.51].forEach((f, i) => saleNote(ac, out, t + i * 0.055, f, 1.1, SALE_PLUCK, g * (0.55 + i * 0.05))),
+    // колокольчики на ветру: высокие ноты пентатоники вразнобой, каждый раз чуть по-другому
+    chime: (ac, out, t, g) => [2093, 2349.32, 2637.02, 3135.96, 3520].sort(() => Math.random() - 0.5)
+      .forEach((f, i) => saleNote(ac, out, t + i * 0.08 + Math.random() * 0.05, f, 1.6, SALE_BELL, g * 0.42)),
+    // «новый уровень» из игр: быстрые ноты аккорда вверх
+    level: (ac, out, t, g) => [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => saleNote(ac, out, t + i * 0.07, f, i === 3 ? 0.6 : 0.14, SALE_BRIGHT, g * 0.5, 'triangle')),
+    // два пузырька: короткие «блюп» вверх
+    pop: (ac, out, t, g) => { saleSweep(ac, out, t, 320, 980, 0.13, g * 0.85); saleSweep(ac, out, t + 0.12, 460, 1450, 0.15, g * 0.65); },
+    // волшебная пыльца: россыпь высоких нот вверх поверх мягкого аккорда
+    magic: (ac, out, t, g) => {
+      [1046.5, 1174.66, 1318.51, 1567.98, 1760, 2093, 2349.32, 2637.02, 3135.96].forEach((f, i) => saleNote(ac, out, t + i * 0.045, f, 0.8, SALE_BELL, g * (0.22 + i * 0.03)));
+      saleNote(ac, out, t, 523.25, 1.5, SALE_BRIGHT, g * 0.2); saleNote(ac, out, t, 659.25, 1.5, SALE_BRIGHT, g * 0.14);
+    },
+    // деревянные пластинки маримбы — две ноты
+    marimba: (ac, out, t, g) => { saleNote(ac, out, t, 783.99, 0.5, SALE_MALLET, g * 0.8); saleNote(ac, out, t + 0.12, 1046.5, 0.7, SALE_MALLET, g * 0.9); },
+    // калимба: три звонких язычка
+    kalimba: (ac, out, t, g) => [1318.51, 1567.98, 1975.53].forEach((f, i) => saleNote(ac, out, t + i * 0.1, f, 0.9, SALE_TINE, g * 0.7)),
+    // «та-да!»: короткая нота и аккорд
+    tada: (ac, out, t, g) => {
+      saleNote(ac, out, t, 392, 0.12, SALE_BRASS, g * 0.45, 'triangle');
+      [[523.25, 0.5], [659.25, 0.38], [783.99, 0.32]].forEach(([f, k]) => saleNote(ac, out, t + 0.13, f, 0.85, SALE_BRASS, g * k, 'triangle'));
+    },
+    // капля: два «плинк» с подъёмом тона
+    drop: (ac, out, t, g) => { saleSweep(ac, out, t, 620, 1700, 0.18, g * 0.75); saleSweep(ac, out, t + 0.2, 760, 1900, 0.15, g * 0.4); },
+    // кристалл: высокий звон с лёгким переливом (две чуть разные ноты)
+    gem: (ac, out, t, g) => [2637.02, 3135.96, 3951.07].forEach((f, i) => {
+      saleNote(ac, out, t + i * 0.08, f, 1.3, SALE_BELL, g * 0.38); saleNote(ac, out, t + i * 0.08, f * 1.004, 1.3, SALE_BELL, g * 0.28);
+    }),
   };
+  // ---- свои звуки: файл хранится в настройках скрипта (видно во всех вкладках DA), играется через ту же громкость ----
+  const SALE_SND_MAX = 1024 * 1024, SALE_SND_N = 8;
+  const saleBufs = new Map();
+  const saleSndIdx = () => saleArr('saleSndIdx'); // [{ id, n — название, s — секунд }]
+  async function saleBuf(id) {
+    if (saleBufs.has(id)) return saleBufs.get(id);
+    const url = GM_getValue('saleSnd:' + id, ''), ac = saleCtx();
+    if (!url || !ac) return null;
+    const bin = atob(url.slice(url.indexOf(',') + 1)), arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const buf = await ac.decodeAudioData(arr.buffer);
+    saleBufs.set(id, buf);
+    return buf;
+  }
+  async function saleSndAdd(file) {
+    if (!file) return { ok: false, msg: 'файл не выбран' };
+    if (file.size > SALE_SND_MAX) return { ok: false, msg: 'файл больше 1 МБ — нужен короткий звук на пару секунд' };
+    const idx = saleSndIdx();
+    if (idx.length >= SALE_SND_N) return { ok: false, msg: 'своих звуков уже ' + SALE_SND_N + ' — удалите ненужный (×)' };
+    const ac = saleCtx();
+    if (!ac) return { ok: false, msg: 'этот браузер не умеет играть звуки' };
+    let buf;
+    try { buf = await ac.decodeAudioData(await file.arrayBuffer()); } catch (e) { return { ok: false, msg: 'это не звук или формат не подходит — нужен mp3, wav, ogg или m4a' }; }
+    const url = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(file); });
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    const n = file.name.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[_]+/g, ' ').trim().slice(0, 24) || 'Свой звук';
+    GM_setValue('saleSnd:' + id, url);
+    GM_setValue('saleSndIdx', JSON.stringify([...idx, { id, n, s: Math.round(buf.duration * 10) / 10 }]));
+    saleBufs.set(id, buf);
+    return { ok: true, id, n, long: buf.duration > SALE_MAX_SEC };
+  }
+  function saleSndDel(id) {
+    GM_setValue('saleSnd:' + id, '');
+    GM_setValue('saleSndIdx', JSON.stringify(saleSndIdx().filter((x) => x.id !== id)));
+    saleBufs.delete(id);
+    if (sale.tone === 'u:' + id) { sale.tone = 'coin'; saleSave(); }
+  }
   // n продаж разом — звон повторяется (не больше трёх раз). false — браузер не дал звук
   async function salePlay(n = 1, tone = sale.tone, vol = sale.vol) {
     const ac = saleCtx();
@@ -8641,6 +8795,21 @@
     out.connect(comp).connect(ac.destination);
     out.connect(saleReverb(ac));
     const t0 = ac.currentTime + 0.03, reps = Math.min(3, Math.max(1, n));
+    if (String(tone).startsWith('u:')) {
+      let buf = null;
+      try { buf = await saleBuf(tone.slice(2)); } catch (e) { /* файл испорчен — сыграем монетку */ }
+      if (buf) {
+        // свой звук — один раз, без эха комнаты; длинный обрываем мягко
+        const s = ac.createBufferSource(), gs = ac.createGain(), len = Math.min(buf.duration, SALE_MAX_SEC);
+        s.buffer = buf; gs.gain.value = out.gain.value * 1.3;
+        if (buf.duration > SALE_MAX_SEC) { gs.gain.setValueAtTime(out.gain.value * 1.3, ac.currentTime + 0.03 + len - 0.4); gs.gain.linearRampToValueAtTime(0, ac.currentTime + 0.03 + len); }
+        s.connect(gs).connect(comp);
+        s.start(ac.currentTime + 0.03); s.stop(ac.currentTime + 0.03 + len + 0.05);
+        setTimeout(() => { try { gs.disconnect(); out.disconnect(); comp.disconnect(); } catch (e) { /* уже отключено */ } }, (len + 2.5) * 1000);
+        return true;
+      }
+      tone = 'coin';
+    }
     for (let k = 0; k < reps; k++) (SALE_SYNTH[tone] || SALE_SYNTH.coin)(ac, out, t0 + k * 0.42, k ? 0.7 : 1);
     setTimeout(() => { try { out.disconnect(); comp.disconnect(); } catch (e) { /* уже отключено */ } }, (reps * 0.42 + 2.5) * 1000);
     return true;
