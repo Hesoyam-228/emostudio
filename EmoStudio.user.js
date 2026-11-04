@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.15.2
+// @version      1.15.3
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -3944,12 +3944,43 @@
   @keyframes scPlay{40%{transform:scale(1.4) rotate(-12deg)}}
   .sc.add{justify-content:center;background:transparent;box-shadow:inset 0 0 0 1.5px var(--track);color:var(--sub)}
   .sc.add:hover{color:var(--text);box-shadow:inset 0 0 0 1.5px rgba(var(--a1rgb),.6)}
-  .sc .sx{margin-left:auto;flex:none;width:17px;height:17px;border-radius:50%;display:grid;place-items:center;font-size:12px;line-height:1;color:var(--sub);background:var(--tile);opacity:.55;transition:opacity .2s,background .2s}
+  .sc .sx{margin-left:auto;flex:none;width:17px;height:17px;border-radius:50%;display:grid;place-items:center;font-size:12px;line-height:1;color:var(--sub);background:var(--tile);opacity:.8;transition:opacity .2s,background .2s,color .2s}
   .sc:hover .sx{opacity:1}
   .sc .sx:hover{background:var(--err);color:#fff}
   .snd-test{display:inline-flex;align-items:center;gap:4px;padding:5px 11px 5px 8px}
   .snd-test svg{width:12px;height:12px;fill:currentColor}
   #saleFold .rl{align-items:center}
+  .sc .sx svg{width:11px;height:11px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round}
+  .sc .sx+.sx{margin-left:0}
+  .sc .sx.cut:hover{background:var(--a1);color:#fff}
+  .trim{margin-top:10px;padding:10px;border-radius:14px;background:var(--tile);box-shadow:inset 0 0 0 .5px var(--line);animation:rise .45s var(--spring)}
+  .tr-h{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .tr-h b{flex:none;font-size:12px;font-weight:650}
+  .tr-name{flex:1;min-width:0;padding:5px 9px;border:0;border-radius:9px;outline:none;background:var(--tile);color:var(--text);font:inherit;font-size:12px;font-weight:600;
+    box-shadow:inset 0 0 0 .5px var(--line);transition:box-shadow .25s}
+  .tr-name:focus{box-shadow:inset 0 0 0 1.5px var(--a1)}
+  .tr-ov,.tr-wave{display:block;width:100%;touch-action:none;border-radius:9px;outline:none;user-select:none;-webkit-user-select:none}
+  .tr-ov{height:24px;margin-bottom:6px;cursor:pointer;background:var(--tile)}
+  .tr-wave{height:72px;cursor:pointer;background:rgba(0,0,0,.1);transition:box-shadow .25s}
+  .tr-wave:focus-visible{box-shadow:0 0 0 1.5px var(--a1)}
+  .tr-t{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:7px;font-variant-numeric:tabular-nums}
+  .tr-t small{font-size:11px;color:var(--sub);white-space:nowrap;transition:color .2s}
+  .tr-t small.lim{color:var(--a1);font-weight:650}
+  .tr-n{display:flex;align-items:center;gap:2px}
+  .tr-n b{min-width:42px;text-align:center;font-size:12px;font-weight:650}
+  .tr-n button{width:22px;height:22px;border-radius:7px;background:var(--tile);font-size:15px;line-height:1;color:var(--sub);transition:background .2s,color .2s,transform .3s var(--spring)}
+  .tr-n button:hover{background:var(--track);color:var(--text)}
+  .tr-n button:active{transform:scale(.88)}
+  .tr-acts{display:flex;align-items:center;gap:6px;margin-top:9px}
+  .tr-acts>small{margin-left:auto;font-size:11px;color:var(--sub)}
+  .tr-acts .pbtn{padding:6px 11px;font-size:11.5px}
+  .tr-play{display:inline-flex;align-items:center;gap:4px;min-width:84px;justify-content:center}
+  .tr-play svg{width:11px;height:11px;fill:currentColor}
+  .tr-play.on{background:rgba(var(--a1rgb),.2);box-shadow:inset 0 0 0 1.5px var(--a1)}
+  .tr-tg[aria-pressed=true]{background:rgba(var(--a1rgb),.2);box-shadow:inset 0 0 0 1.5px var(--a1)}
+  .tr-end .pbtn{flex:1;padding:8px 0}
+  .tr-save{color:#fff;background:var(--grad)!important;box-shadow:0 4px 12px rgba(var(--amrgb),.3)}
+  .tr-save:hover{filter:brightness(1.08)}
   .card.sw{padding:12px 14px;margin-bottom:10px;background:rgba(255,159,10,.15);animation:swap .4s var(--smooth)}
   .sw-h{display:flex;justify-content:space-between;align-items:center;gap:8px}
   .sw-dots{display:flex;gap:4px}
@@ -4517,8 +4548,29 @@
               <div class="row">
                 <div class="rl"><span>Звук</span><button class="pbtn snd-test" id="saleTest" title="Сыграть и показать плашку «Продано»"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5z"/></svg>Проверить</button></div>
                 <div class="snd" id="saleSnd" role="listbox" aria-label="Звук продажи"></div>
-                <small class="rn-msg" id="saleSndMsg">нажмите — услышите. «Свой звук» — mp3, wav или ogg до 1 МБ</small>
+                <small class="rn-msg" id="saleSndMsg">нажмите — услышите. «Свой звук» — mp3, wav или ogg до 10 МБ, нужный кусок вырежете сами</small>
                 <input type="file" id="saleFile" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm" hidden>
+                <div class="trim" id="sndTrim" hidden>
+                  <div class="tr-h"><b id="trTitle">Новый звук</b><input class="tr-name" id="trName" maxlength="24" spellcheck="false" placeholder="название" aria-label="Название звука"></div>
+                  <canvas class="tr-ov" id="trOv" aria-label="Вся запись: нажмите, где нужный кусок"></canvas>
+                  <canvas class="tr-wave" id="trWave" tabindex="0" aria-label="Кусок звука: тяните края или сам кусок, стрелки двигают край, пробел — слушать"></canvas>
+                  <div class="tr-t">
+                    <span class="tr-n"><button data-n="a" data-d="-1" title="Начало раньше">‹</button><b id="trA"></b><button data-n="a" data-d="1" title="Начало позже">›</button></span>
+                    <small id="trLen"></small>
+                    <span class="tr-n"><button data-n="b" data-d="-1" title="Конец раньше">‹</button><b id="trB"></b><button data-n="b" data-d="1" title="Конец позже">›</button></span>
+                  </div>
+                  <div class="tr-acts">
+                    <button class="pbtn tr-play" id="trPlay"></button>
+                    <small>плавно:</small>
+                    <button class="pbtn tr-tg" id="trFi" aria-pressed="false" title="Звук нарастает в начале">начало</button>
+                    <button class="pbtn tr-tg" id="trFo" aria-pressed="false" title="Звук затихает в конце">конец</button>
+                  </div>
+                  <small class="rn-msg" id="trMsg"></small>
+                  <div class="tr-acts tr-end">
+                    <button class="pbtn" id="trCancel">Отмена</button>
+                    <button class="pbtn tr-save" id="trSave">Добавить</button>
+                  </div>
+                </div>
               </div>
               <div class="row"><div class="rl"><span>Громкость</span><output id="saleVolV"></output></div>
                 <input id="saleVol" type="range" min="5" max="100" step="5" aria-label="Громкость звука продажи"></div>
@@ -5215,21 +5267,33 @@
     const sndBox = $('#saleSnd'), sndMsg = $('#saleSndMsg'), sndFile = $('#saleFile'), sndMsg0 = sndMsg.textContent;
     const escH = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     let sndSig = '';
+    const SCISS = '<svg viewBox="0 0 24 24"><circle cx="6.5" cy="6.5" r="2.7"/><circle cx="6.5" cy="17.5" r="2.7"/><path d="M8.6 8.2L20 17M8.6 15.8L20 7"/></svg>';
     const sndPaint = () => {
       const own = saleSndIdx();
-      sndSig = sale.tone + '|' + own.map((x) => x.id).join(',');
+      sndSig = sale.tone + '|' + own.map((x) => x.id + x.n).join(',');
       const items = SALE_TONES.map(([v, n, e]) => ({ v, n, e })).concat(own.map((x) => ({ v: 'u:' + x.id, n: x.n, e: '🎧', del: x.id })));
       if (!items.some((x) => x.v === sale.tone)) { sale.tone = 'coin'; saleSave(); }
       sndBox.innerHTML = items.map((x) => '<button class="sc" role="option" data-v="' + escH(x.v) + '" aria-selected="' + (x.v === sale.tone) + '" title="' + escH(x.n) + '"><i>' + x.e + '</i><span>' + escH(x.n) + '</span>'
-        + (x.del ? '<span class="sx" data-del="' + escH(x.del) + '" title="Удалить звук">×</span>' : '') + '</button>').join('')
-        + (own.length < SALE_SND_N ? '<button class="sc add" data-add="1" title="Загрузить свой звук: mp3, wav или ogg до 1 МБ"><i>＋</i><span>Свой звук</span></button>' : '');
+        + (x.del ? '<span class="sx cut" data-cut="' + escH(x.del) + '" title="Обрезать звук">' + SCISS + '</span><span class="sx" data-del="' + escH(x.del) + '" title="Удалить звук">×</span>' : '') + '</button>').join('')
+        + (own.length < SALE_SND_N ? '<button class="sc add" data-add="1" title="Загрузить свой звук: mp3, wav или ogg до 10 МБ — кусок выберете сами"><i>＋</i><span>Свой звук</span></button>' : '');
     };
     const sndNote = (t, k) => { sndMsg.textContent = t; sndMsg.className = 'rn-msg' + (k ? ' ' + k : ''); clearTimeout(sndNote.t); sndNote.t = setTimeout(() => { sndMsg.textContent = sndMsg0; sndMsg.className = 'rn-msg'; }, 6000); };
     sndBox.onclick = async (e) => {
+      const cut = e.target.closest('[data-cut]');
+      if (cut) {
+        e.stopPropagation();
+        const id = cut.dataset.cut, it = saleSndIdx().find((x) => x.id === id);
+        let buf = null;
+        try { buf = await saleBuf(id); } catch (er) { /* файл испорчен */ }
+        if (!it || !buf) { sndNote('не получилось открыть звук — удалите его и загрузите заново', 'err'); return; }
+        trOpen({ id, buf, n: it.n, ...saleSndCut(it, buf) });
+        return;
+      }
       const del = e.target.closest('[data-del]');
       if (del) {
         e.stopPropagation();
         const it = saleSndIdx().find((x) => x.id === del.dataset.del);
+        if (ed && ed.id === del.dataset.del) trClose();
         saleSndDel(del.dataset.del); sndPaint(); sndNote('удалил «' + (it ? it.n : 'звук') + '»', 'ok');
         return;
       }
@@ -5245,11 +5309,233 @@
       const f = sndFile.files && sndFile.files[0];
       sndFile.value = '';
       if (!f) return;
-      sndNote('загружаю «' + f.name + '»…');
-      const r = await saleSndAdd(f);
+      sndNote('открываю «' + f.name + '»…');
+      const r = await saleSndOpen(f);
       if (!r.ok) { sndNote(r.msg, 'err'); return; }
+      trOpen({ buf: r.buf, file: f, n: r.n });
+    };
+
+    // ---- обрезка своего звука: волна, два края, «Слушать». Длинная запись — сверху вся, снизу крупно кусок вокруг выделения ----
+    const trEl = $('#sndTrim'), trWave = $('#trWave'), trOv = $('#trOv'), trName = $('#trName'), trA = $('#trA'), trB = $('#trB');
+    const trLen = $('#trLen'), trPlayBtn = $('#trPlay'), trFi = $('#trFi'), trFo = $('#trFo'), trMsg = $('#trMsg'), trSaveBtn = $('#trSave');
+    const TR_MIN = 0.1, TR_VIEW = 16, TR_STEP = 0.05;
+    const TR_PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5z"/></svg>Слушать', TR_STOP = '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>Стоп';
+    let ed = null, trPk = null, trOvPk = null, trPl = null, trRaf = 0, trDrag = null, trLim = 0, trMsg0 = '';
+    trPlayBtn.innerHTML = TR_PLAY;
+    if (window.ResizeObserver) new ResizeObserver(() => trReq()).observe(trWave);
+    const trFmt = (t) => { const m = Math.floor(t / 60), s = t - m * 60; return m ? m + ':' + (s < 10 ? '0' : '') + s.toFixed(2) : s.toFixed(2); };
+    // громкость по столбикам на отрезке [t0, t1]
+    const trPeaks = (buf, t0, t1, cols) => {
+      const sr = buf.sampleRate, out = new Float32Array(cols), i0 = t0 * sr, per = Math.max(1, (t1 - t0) * sr / cols), step = Math.max(1, Math.floor(per / 1500));
+      for (let c = 0; c < Math.min(2, buf.numberOfChannels); c++) {
+        const d = buf.getChannelData(c);
+        for (let k = 0; k < cols; k++) {
+          let m = out[k];
+          for (let i = Math.floor(i0 + k * per), e = Math.min(d.length, Math.floor(i0 + (k + 1) * per)); i < e; i += step) { const v = d[i] < 0 ? -d[i] : d[i]; if (v > m) m = v; }
+          out[k] = m;
+        }
+      }
+      return out;
+    };
+    // где начинается и кончается звук (тишину по краям сразу отрезаем)
+    const trEdges = (buf, t1, t2) => { // t1 — порог начала, t2 — конца (тише, чтобы не срезать затухающий «хвост» звона)
+      const chs = [], sr = buf.sampleRate;
+      for (let c = 0; c < Math.min(2, buf.numberOfChannels); c++) chs.push(buf.getChannelData(c));
+      const n = chs[0].length, loud = (i, t) => chs.some((d) => d[i] > t || d[i] < -t);
+      let i = 0, j = n - 1;
+      while (i < n && !loud(i, t1)) i += 4;
+      if (i >= n) return [0, buf.duration];
+      while (j > i && !loud(j, t2)) j -= 4;
+      return [Math.max(0, i / sr - 0.015), Math.min(buf.duration, j / sr + 0.1)];
+    };
+    // что видно крупно: вся запись, если она до 16 с, иначе 16 с вокруг выделенного куска
+    const trView = () => {
+      const d = ed.buf.duration;
+      if (d <= TR_VIEW) { ed.v0 = 0; ed.v1 = d; return; }
+      ed.v0 = Math.max(0, Math.min(d - TR_VIEW, (ed.a + ed.b) / 2 - TR_VIEW / 2)); ed.v1 = ed.v0 + TR_VIEW;
+    };
+    // двигаем край. Кусок длиннее 8 с нельзя — второй край едет следом
+    const trSet = (k, t, lo = 0, hi = ed.buf.duration) => {
+      if (k === 'a') ed.a = Math.max(lo, Math.min(t, ed.b - TR_MIN));
+      else ed.b = Math.min(hi, Math.max(t, ed.a + TR_MIN));
+      if (ed.b - ed.a > SALE_MAX_SEC + 1e-6) {
+        if (k === 'a') ed.b = ed.a + SALE_MAX_SEC; else ed.a = ed.b - SALE_MAX_SEC;
+        trLim = Date.now(); clearTimeout(trSet.t); trSet.t = setTimeout(trReq, 1300); // «не больше 8 с» мигнёт и пропадёт
+      }
+    };
+    const trMove = (a0, len, lo, hi) => { ed.a = Math.max(lo, Math.min(a0, hi - len)); ed.b = ed.a + len; };
+    const trCss = () => {
+      const cs = getComputedStyle(trEl), v = (k, d) => cs.getPropertyValue(k).trim() || d;
+      return { a1: v('--a1', '#ff2d78'), a2: v('--a2', '#a855f7'), tr: v('--track', 'rgba(120,120,128,.42)'), tx: v('--text', '#f5f5f7') };
+    };
+    const trRR = (g, x, y, w, h, r) => { g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h); };
+    const trCanvas = (cv) => {
+      const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+      if (!W || !H) return null;
+      if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+      const g = cv.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+      return { g, W, H };
+    };
+    const trDraw = () => {
+      if (!ed) return;
+      const col = trCss(), c = trCanvas(trWave);
+      if (c) {
+        const { g, W, H } = c, cols = Math.floor(W / 3), key = ed.v0 + '|' + ed.v1 + '|' + cols;
+        if (!trPk || trPk.key !== key) trPk = { key, p: trPeaks(ed.buf, ed.v0, ed.v1, cols) };
+        const X = (t) => (t - ed.v0) / (ed.v1 - ed.v0) * W, xa = X(ed.a), xb = X(ed.b), len = ed.b - ed.a, env = saleEnv(len, ed);
+        g.globalAlpha = 0.17; g.fillStyle = col.a1; g.fillRect(xa, 0, xb - xa, H); g.globalAlpha = 1;
+        const grad = g.createLinearGradient(xa, 0, Math.max(xb, xa + 1), 0);
+        grad.addColorStop(0, col.a1); grad.addColorStop(1, col.a2);
+        const norm = 1 / Math.max(ed.pk, 0.02), mid = H / 2;
+        for (let k = 0; k < cols; k++) {
+          const x = k * 3, cx = x + 1, t = ed.v0 + cx / W * (ed.v1 - ed.v0), inSel = cx >= xa && cx <= xb;
+          let v = Math.min(1, trPk.p[k] * norm);
+          if (inSel) { const u = t - ed.a; v *= Math.max(0, Math.min(1, u / env.i, (len - u) / env.o)); } // видно, где звук нарастает и затихает
+          const h = Math.max(1.5, v * (H - 10));
+          g.fillStyle = inSel ? grad : col.tr; g.fillRect(x, mid - h / 2, 2, h);
+        }
+        for (const x of [xa, xb]) { // края — ручки
+          g.fillStyle = col.a1; g.fillRect(Math.round(x) - 1, 0, 2, H);
+          trRR(g, x - 4.5, mid - 11, 9, 22, 4.5); g.fill();
+          g.fillStyle = 'rgba(255,255,255,.9)'; g.fillRect(x - 0.6, mid - 5, 1.2, 10);
+        }
+        if (trPl) { // что сейчас играет
+          const p = trPl.ac.currentTime - trPl.t0;
+          if (p >= 0 && p <= trPl.len) { g.fillStyle = col.tx; g.fillRect(X(trPl.a + p) - 0.75, 0, 1.5, H); }
+        }
+      }
+      const o = trOv.hidden ? null : trCanvas(trOv);
+      if (o) {
+        const { g, W, H } = o, d = ed.buf.duration, cols = Math.floor(W / 2);
+        if (!trOvPk || trOvPk.cols !== cols) trOvPk = { cols, p: trPeaks(ed.buf, 0, d, cols) };
+        const X = (t) => t / d * W, xa = X(ed.a), xb = X(ed.b), norm = 1 / Math.max(ed.pk, 0.02);
+        for (let k = 0; k < cols; k++) {
+          const x = k * 2, h = Math.max(1, Math.min(1, trOvPk.p[k] * norm) * (H - 6));
+          g.fillStyle = x + 1.5 >= xa && x <= xb ? col.a1 : col.tr; g.fillRect(x, (H - h) / 2, 1.5, h);
+        }
+        g.strokeStyle = col.tx; g.globalAlpha = 0.55; g.lineWidth = 1; // рамка — то, что видно крупно внизу
+        trRR(g, X(ed.v0) + 0.5, 0.5, Math.max(4, X(ed.v1) - X(ed.v0) - 1), H - 1, 5); g.stroke(); g.globalAlpha = 1;
+      }
+    };
+    // подписи времени — сразу, не дожидаясь перерисовки волны
+    const trLabels = () => {
+      trA.textContent = trFmt(ed.a); trB.textContent = trFmt(ed.b);
+      const len = ed.b - ed.a, lim = Date.now() - trLim < 1200;
+      trLen.textContent = lim ? 'не больше ' + SALE_MAX_SEC + ' с' : 'кусок ' + len.toFixed(2) + ' с';
+      trLen.classList.toggle('lim', lim);
+    };
+    const trReq = () => {
+      if (!ed) return;
+      trLabels();
+      if (trRaf) return;
+      trRaf = requestAnimationFrame(() => {
+        trRaf = 0;
+        if (trPl && trPl.ac.currentTime > trPl.t0 + trPl.len + 0.05) trStop(true);
+        trDraw();
+        if (trPl) trReq();
+      });
+    };
+    const trStop = (quiet) => {
+      if (trPl) { if (!quiet) trPl.stop(); trPl = null; }
+      trPlayBtn.innerHTML = TR_PLAY; trPlayBtn.classList.remove('on');
+      trReq();
+    };
+    const trNote = (t, k) => { trMsg.textContent = t; trMsg.className = 'rn-msg' + (k ? ' ' + k : ''); clearTimeout(trNote.t); trNote.t = setTimeout(() => { trMsg.textContent = trMsg0; trMsg.className = 'rn-msg'; }, 6000); };
+    const trToggle = async () => {
+      if (!ed) return;
+      if (trPl) { trStop(); return; }
+      let tok = null;
+      const p = await saleBufPlay(ed.buf, ed, sale.vol, () => { if (tok && trPl === tok) trStop(true); });
+      if (!p) { trNote('браузер не дал звук — кликните по странице и нажмите ещё раз', 'err'); return; }
+      if (!ed || trPl) { p.stop(); return; }
+      tok = trPl = { ...p, a: ed.a };
+      trPlayBtn.innerHTML = TR_STOP; trPlayBtn.classList.add('on');
+      trReq();
+    };
+    const trOpen = (o) => {
+      if (trPl) trStop();
+      const d = o.buf.duration;
+      ed = { ...o, n0: o.n, pk: 0, last: 'a' };
+      for (const v of trPeaks(o.buf, 0, d, 512)) if (v > ed.pk) ed.pk = v;
+      if (o.a == null) { // новый звук: тишину по краям убираем сразу, длинный — первые 8 с от начала звука
+        const [s0, s1] = trEdges(o.buf, Math.max(ed.pk * 0.02, 0.002), Math.max(ed.pk * 0.006, 0.0008));
+        ed.a = s0; ed.b = Math.min(s1, s0 + SALE_MAX_SEC);
+        if (ed.b - ed.a < TR_MIN) { ed.a = 0; ed.b = Math.min(d, SALE_MAX_SEC); }
+        ed.fi = false; ed.fo = ed.b < s1 - 0.05; // обрезали посреди звука — пусть мягко затихает
+      }
+      trPk = trOvPk = null;
+      trOv.hidden = d <= TR_VIEW;
+      trView();
+      trName.value = o.n;
+      $('#trTitle').textContent = o.id ? 'Обрезать' : 'Новый звук';
+      trSaveBtn.textContent = o.id ? 'Сохранить' : 'Добавить';
+      trFi.setAttribute('aria-pressed', String(!!ed.fi)); trFo.setAttribute('aria-pressed', String(!!ed.fo));
+      const dTxt = d < 60 ? Math.round(d) + ' с' : Math.floor(d / 60) + ' мин ' + Math.round(d % 60) + ' с';
+      trMsg0 = (d > TR_VIEW ? 'вверху вся запись (' + dTxt + ') — нажмите, где нужный кусок. ' : '') + 'Тяните края или сам кусок, ‹ › — точнее. Не больше ' + SALE_MAX_SEC + ' с';
+      trMsg.textContent = trMsg0; trMsg.className = 'rn-msg';
+      trEl.hidden = false; sndMsg.hidden = true;
+      trReq();
+      setTimeout(() => { if (ed) trEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 60);
+    };
+    const trClose = () => { if (trPl) trStop(); ed = null; trPk = trOvPk = null; trEl.hidden = true; sndMsg.hidden = false; };
+    const trT = (cv, e, v0, v1) => { const r = cv.getBoundingClientRect(); return v0 + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (v1 - v0); };
+    const trHit = (e) => {
+      const r = trWave.getBoundingClientRect(), px = e.clientX - r.left, X = (t) => (t - ed.v0) / (ed.v1 - ed.v0) * r.width;
+      const xa = X(ed.a), xb = X(ed.b), t = trT(trWave, e, ed.v0, ed.v1);
+      if (Math.min(Math.abs(px - xa), Math.abs(px - xb)) <= 12) return { k: px < (xa + xb) / 2 ? 'a' : 'b', t, edge: true };
+      return { k: t > ed.a && t < ed.b ? 'm' : t <= ed.a ? 'a' : 'b', t, edge: false };
+    };
+    trWave.onpointerdown = (e) => {
+      if (!ed || e.button > 0) return;
+      e.preventDefault(); trWave.focus({ preventScroll: true });
+      const h = trHit(e);
+      trDrag = { k: h.k, t0: h.t, a0: ed.a, len: ed.b - ed.a };
+      if (h.k !== 'm') { ed.last = h.k; if (!h.edge) trSet(h.k, h.t, ed.v0, ed.v1); }
+      try { trWave.setPointerCapture(e.pointerId); } catch (er) { /* не страшно */ }
+      trReq();
+    };
+    trWave.onpointermove = (e) => {
+      if (!ed) return;
+      if (!trDrag) { const h = trHit(e); trWave.style.cursor = h.edge ? 'ew-resize' : h.k === 'm' ? 'grab' : 'pointer'; return; }
+      const t = trT(trWave, e, ed.v0, ed.v1);
+      if (trDrag.k === 'm') { trWave.style.cursor = 'grabbing'; trMove(trDrag.a0 + t - trDrag.t0, trDrag.len, ed.v0, ed.v1); } else trSet(trDrag.k, t, ed.v0, ed.v1);
+      trReq();
+    };
+    trWave.onpointerup = trWave.onpointercancel = () => { trDrag = null; };
+    const trOvAt = (e) => { const d = ed.buf.duration, len = ed.b - ed.a; trMove(trT(trOv, e, 0, d) - len / 2, len, 0, d); trView(); trReq(); };
+    trOv.onpointerdown = (e) => {
+      if (!ed || e.button > 0) return;
+      e.preventDefault(); trDrag = { k: 'o' };
+      try { trOv.setPointerCapture(e.pointerId); } catch (er) { /* не страшно */ }
+      trOvAt(e);
+    };
+    trOv.onpointermove = (e) => { if (ed && trDrag && trDrag.k === 'o') trOvAt(e); };
+    trOv.onpointerup = trOv.onpointercancel = () => { trDrag = null; };
+    const trNudge = (k, dt) => { ed.last = k; trSet(k, ed[k] + dt); if (ed.a < ed.v0 || ed.b > ed.v1) trView(); trReq(); };
+    trEl.querySelector('.tr-t').onclick = (e) => { const b = e.target.closest('[data-n]'); if (b && ed) trNudge(b.dataset.n, +b.dataset.d * TR_STEP); };
+    trWave.onkeydown = (e) => {
+      if (!ed) return;
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') trNudge(ed.last || 'a', (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 0.5 : TR_STEP));
+      else if (e.key === ' ' || e.key === 'Enter') trToggle();
+      else return;
+      e.preventDefault(); e.stopPropagation();
+    };
+    trPlayBtn.onclick = () => trToggle();
+    trFi.onclick = () => { ed.fi = !ed.fi; trFi.setAttribute('aria-pressed', String(ed.fi)); trReq(); };
+    trFo.onclick = () => { ed.fo = !ed.fo; trFo.setAttribute('aria-pressed', String(ed.fo)); trReq(); };
+    $('#trCancel').onclick = () => trClose();
+    trSaveBtn.onclick = async () => {
+      if (!ed || trSaveBtn.disabled) return;
+      ed.n = trName.value.trim().slice(0, 24) || ed.n0 || 'Свой звук';
+      if (trPl) trStop();
+      trSaveBtn.disabled = true;
+      const isNew = !ed.id, n = ed.n, r = await saleSndSave(ed).catch((er) => ({ ok: false, msg: 'не получилось сохранить: ' + String(er && er.message || er).slice(0, 80) }));
+      trSaveBtn.disabled = false;
+      if (!r.ok) { trNote(r.msg, 'err'); return; }
+      trClose();
       sale.tone = 'u:' + r.id; saleSave(); sndPaint(); salePlay(1);
-      sndNote('добавил «' + r.n + '» и выбрал его' + (r.long ? ' — звук длинный, сыграю первые ' + SALE_MAX_SEC + ' с' : ''), 'ok');
+      sndNote((isNew ? 'добавил «' : 'сохранил «') + n + '» и выбрал его', 'ok');
     };
     sndPaint();
     const ago = (ms) => {
@@ -8747,9 +9033,17 @@
     }),
   };
   // ---- свои звуки: файл хранится в настройках скрипта (видно во всех вкладках DA), играется через ту же громкость ----
-  const SALE_SND_MAX = 1024 * 1024, SALE_SND_N = 8;
+  // играет только выбранный кусок. Большой файл (песню) целиком не храним: вырезаем кусок (+2 с запаса по краям) в маленький wav
+  const SALE_SND_MAX = 1024 * 1024, SALE_SND_FILE = 10 * 1024 * 1024, SALE_SND_N = 8;
   const saleBufs = new Map();
-  const saleSndIdx = () => saleArr('saleSndIdx'); // [{ id, n — название, s — секунд }]
+  const saleSndIdx = () => saleArr('saleSndIdx'); // [{ id, n — название, s — секунд, a/b — какой кусок играть, fi/fo — плавное начало/конец }]
+  // какой кусок играть. У звуков без обрезки (из 1.15.2) — первые 8 с, длинный плавно затихает
+  function saleSndCut(it, buf) {
+    const d = buf.duration, a = it && it.a != null ? Math.max(0, Math.min(+it.a || 0, d - 0.02)) : 0;
+    let b = it && it.b != null ? Math.min(d, +it.b || d) : d;
+    if (b <= a) b = d;
+    return { a, b: Math.min(b, a + SALE_MAX_SEC), fi: !!(it && it.fi), fo: it && it.fo != null ? !!it.fo : d > SALE_MAX_SEC };
+  }
   async function saleBuf(id) {
     if (saleBufs.has(id)) return saleBufs.get(id);
     const url = GM_getValue('saleSnd:' + id, ''), ac = saleCtx();
@@ -8760,22 +9054,60 @@
     saleBufs.set(id, buf);
     return buf;
   }
-  async function saleSndAdd(file) {
+  // открыть файл: проверить и раскодировать. Сохраняем потом — когда выбрали кусок
+  async function saleSndOpen(file) {
     if (!file) return { ok: false, msg: 'файл не выбран' };
-    if (file.size > SALE_SND_MAX) return { ok: false, msg: 'файл больше 1 МБ — нужен короткий звук на пару секунд' };
-    const idx = saleSndIdx();
-    if (idx.length >= SALE_SND_N) return { ok: false, msg: 'своих звуков уже ' + SALE_SND_N + ' — удалите ненужный (×)' };
+    if (file.size > SALE_SND_FILE) return { ok: false, msg: 'файл больше 10 МБ — возьмите покороче' };
+    if (saleSndIdx().length >= SALE_SND_N) return { ok: false, msg: 'своих звуков уже ' + SALE_SND_N + ' — удалите ненужный (×)' };
     const ac = saleCtx();
     if (!ac) return { ok: false, msg: 'этот браузер не умеет играть звуки' };
     let buf;
     try { buf = await ac.decodeAudioData(await file.arrayBuffer()); } catch (e) { return { ok: false, msg: 'это не звук или формат не подходит — нужен mp3, wav, ogg или m4a' }; }
-    const url = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(file); });
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    if (!buf || buf.duration < 0.05) return { ok: false, msg: 'в файле нет звука' };
+    if (buf.duration > 900) return { ok: false, msg: 'запись длиннее 15 минут — возьмите покороче' };
     const n = file.name.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[_]+/g, ' ').trim().slice(0, 24) || 'Свой звук';
+    return { ok: true, buf, n };
+  }
+  const saleDataUrl = (blob) => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
+  // кусок [from, to] → моно wav 32 кГц (10 с — около 0,6 МБ)
+  async function saleCutWav(buf, from, to) {
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    if (!OAC) throw new Error('браузер не умеет резать звук');
+    const rate = Math.min(32000, buf.sampleRate), n = Math.max(1, Math.ceil((to - from) * rate));
+    const oc = new OAC(1, n, rate), s = oc.createBufferSource();
+    s.buffer = buf; s.connect(oc.destination); s.start(0, from, to - from);
+    const r = await oc.startRendering(), d = r.getChannelData(0);
+    const ab = new ArrayBuffer(44 + d.length * 2), v = new DataView(ab);
+    const w = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + d.length * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true);
+    v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, d.length * 2, true);
+    for (let i = 0; i < d.length; i++) { const x = Math.max(-1, Math.min(1, d[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
+    return { url: await saleDataUrl(new Blob([ab], { type: 'audio/wav' })), buf: r };
+  }
+  // сохранить: новый звук (ed.file) или новая обрезка и название у старого (ed.id)
+  async function saleSndSave(ed) {
+    const idx = saleSndIdx(), r3 = (x) => Math.round(x * 1000) / 1000;
+    const meta = { n: ed.n, a: r3(ed.a), b: r3(ed.b), fi: ed.fi ? 1 : 0, fo: ed.fo ? 1 : 0 };
+    if (ed.id) {
+      const i = idx.findIndex((x) => x.id === ed.id);
+      if (i < 0) return { ok: false, msg: 'этот звук уже удалили' };
+      idx[i] = { ...idx[i], ...meta };
+      GM_setValue('saleSndIdx', JSON.stringify(idx));
+      return { ok: true, id: ed.id };
+    }
+    if (idx.length >= SALE_SND_N) return { ok: false, msg: 'своих звуков уже ' + SALE_SND_N + ' — удалите ненужный (×)' };
+    let url, buf = ed.buf;
+    if (ed.file.size <= SALE_SND_MAX) url = await saleDataUrl(ed.file);
+    else {
+      const from = Math.max(0, ed.a - 2), to = Math.min(buf.duration, ed.b + 2), r = await saleCutWav(buf, from, to);
+      url = r.url; buf = r.buf; meta.a = r3(ed.a - from); meta.b = r3(ed.b - from);
+    }
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
     GM_setValue('saleSnd:' + id, url);
-    GM_setValue('saleSndIdx', JSON.stringify([...idx, { id, n, s: Math.round(buf.duration * 10) / 10 }]));
+    GM_setValue('saleSndIdx', JSON.stringify([...idx, { id, s: Math.round(buf.duration * 10) / 10, ...meta }]));
     saleBufs.set(id, buf);
-    return { ok: true, id, n, long: buf.duration > SALE_MAX_SEC };
+    return { ok: true, id };
   }
   function saleSndDel(id) {
     GM_setValue('saleSnd:' + id, '');
@@ -8783,33 +9115,45 @@
     saleBufs.delete(id);
     if (sale.tone === 'u:' + id) { sale.tone = 'coin'; saleSave(); }
   }
+  // плавные края: без «щелчка» — несколько миллисекунд, «плавно» — до 0,6 с в начале и до 1,5 с в конце
+  const saleEnv = (len, c) => ({ i: c.fi ? Math.min(0.6, len * 0.3) : Math.min(0.008, len / 4), o: c.fo ? Math.min(1.5, len * 0.4) : Math.min(0.025, len / 4) });
+  // сыграть кусок [a, b] своего звука, без эха комнаты. Вернёт { stop, t0, len, ac } или null, если браузер не дал звук
+  async function saleBufPlay(buf, c, vol = sale.vol, onEnd) {
+    const ac = saleCtx();
+    if (!ac || !buf) return null;
+    if (ac.state !== 'running') { try { await Promise.race([ac.resume(), sleep(500)]); } catch (e) { /* не разрешили */ } }
+    if (ac.state !== 'running') return null;
+    const a = Math.max(0, Math.min(c.a || 0, buf.duration - 0.02)), len = Math.max(0.02, Math.min(c.b, buf.duration, a + SALE_MAX_SEC) - a), e = saleEnv(len, c);
+    const s = ac.createBufferSource(), gs = ac.createGain(), comp = ac.createDynamicsCompressor();
+    comp.threshold.value = -10; comp.knee.value = 10; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.25;
+    const g = Math.pow(Math.max(0, Math.min(100, vol)) / 100, 1.6) * 0.55 * 1.3, t0 = ac.currentTime + 0.03;
+    gs.gain.setValueAtTime(0, t0); gs.gain.linearRampToValueAtTime(g, t0 + e.i);
+    gs.gain.setValueAtTime(g, t0 + len - e.o); gs.gain.linearRampToValueAtTime(0, t0 + len);
+    s.buffer = buf; s.connect(gs).connect(comp).connect(ac.destination);
+    s.onended = () => { try { gs.disconnect(); comp.disconnect(); } catch (er) { /* уже отключено */ } if (onEnd) onEnd(); };
+    s.start(t0, a, len);
+    return { stop: () => { try { s.stop(); } catch (er) { /* уже остановлен */ } }, t0, len, ac };
+  }
   // n продаж разом — звон повторяется (не больше трёх раз). false — браузер не дал звук
   async function salePlay(n = 1, tone = sale.tone, vol = sale.vol) {
     const ac = saleCtx();
     if (!ac) return false;
     if (ac.state !== 'running') { try { await Promise.race([ac.resume(), sleep(500)]); } catch (e) { /* не разрешили */ } }
     if (ac.state !== 'running') return false;
+    if (String(tone).startsWith('u:')) {
+      // свой звук — один раз, только выбранный кусок
+      const id = tone.slice(2);
+      let buf = null;
+      try { buf = await saleBuf(id); } catch (e) { /* файл испорчен — сыграем монетку */ }
+      if (buf && await saleBufPlay(buf, saleSndCut(saleSndIdx().find((x) => x.id === id), buf), vol)) return true;
+      tone = 'coin';
+    }
     const out = ac.createGain(), comp = ac.createDynamicsCompressor();
     out.gain.value = Math.pow(Math.max(0, Math.min(100, vol)) / 100, 1.6) * 0.55;
     comp.threshold.value = -10; comp.knee.value = 10; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.25;
     out.connect(comp).connect(ac.destination);
     out.connect(saleReverb(ac));
     const t0 = ac.currentTime + 0.03, reps = Math.min(3, Math.max(1, n));
-    if (String(tone).startsWith('u:')) {
-      let buf = null;
-      try { buf = await saleBuf(tone.slice(2)); } catch (e) { /* файл испорчен — сыграем монетку */ }
-      if (buf) {
-        // свой звук — один раз, без эха комнаты; длинный обрываем мягко
-        const s = ac.createBufferSource(), gs = ac.createGain(), len = Math.min(buf.duration, SALE_MAX_SEC);
-        s.buffer = buf; gs.gain.value = out.gain.value * 1.3;
-        if (buf.duration > SALE_MAX_SEC) { gs.gain.setValueAtTime(out.gain.value * 1.3, ac.currentTime + 0.03 + len - 0.4); gs.gain.linearRampToValueAtTime(0, ac.currentTime + 0.03 + len); }
-        s.connect(gs).connect(comp);
-        s.start(ac.currentTime + 0.03); s.stop(ac.currentTime + 0.03 + len + 0.05);
-        setTimeout(() => { try { gs.disconnect(); out.disconnect(); comp.disconnect(); } catch (e) { /* уже отключено */ } }, (len + 2.5) * 1000);
-        return true;
-      }
-      tone = 'coin';
-    }
     for (let k = 0; k < reps; k++) (SALE_SYNTH[tone] || SALE_SYNTH.coin)(ac, out, t0 + k * 0.42, k ? 0.7 : 1);
     setTimeout(() => { try { out.disconnect(); comp.disconnect(); } catch (e) { /* уже отключено */ } }, (reps * 0.42 + 2.5) * 1000);
     return true;
