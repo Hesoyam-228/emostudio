@@ -26,6 +26,20 @@
   if (W.__emoStudio) return;          // скрипт уже запущен в этой вкладке — вторую панель не создаём
   W.__emoStudio = true;
 
+  // DA включил Trusted Types: голая строка в innerHTML и ссылка на воркер блокируются («requires TrustedHTML assignment»).
+  // Свой HTML пропускаем через политику; если политику создать не вышло — пишем как раньше.
+  const TT = (() => {
+    const tt = W.trustedTypes || window.trustedTypes;
+    if (!tt || !tt.createPolicy) return null;
+    // у DA в CSP — белый список имён политик (+ allow-duplicates), своё имя не пройдёт: берём разрешённые по очереди
+    for (const name of ['dompurify', 'da-css-anchor-polyfill', 'da-rspack', 'emostudio']) {
+      try { return tt.createPolicy(name, { createHTML: (x) => x, createScriptURL: (x) => x }); } catch (e) { /* имя не разрешено — пробуем следующее */ }
+    }
+    return null;
+  })();
+  const tH = (x) => (TT ? TT.createHTML(String(x)) : x);
+  const tU = (x) => (TT ? TT.createScriptURL(String(x)) : x);
+
   // ======================================================================
   //  НАСТРОЙКИ И ХРАНИЛИЩЕ
   // ======================================================================
@@ -57,7 +71,7 @@
   const wk = { w: null, seq: 0, cb: new Map() };
   try {
     const src = 'onmessage=function(e){var d=e.data;setTimeout(function(){postMessage(d[0])},d[1])}';
-    wk.w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    wk.w = new Worker(tU(URL.createObjectURL(new Blob([src], { type: 'text/javascript' }))));
     wk.w.onmessage = (e) => { const f = wk.cb.get(e.data); if (f) f(); };
     wk.w.onerror = () => { wk.w = null; };
   } catch (e) { wk.w = null; }
@@ -516,7 +530,7 @@
 
   function buildWiz() {
     addCss(shadow, scaleRadii(WIZ_CSS));
-    shadow.querySelector('#wizSlot').insertAdjacentHTML('beforeend', WIZ_HTML);
+    shadow.querySelector('#wizSlot').insertAdjacentHTML('beforeend', tH(WIZ_HTML));
     const $ = (s) => shadow.querySelector(s);
     wizEl = $('#wiz'); wizT = $('#wizT'); wizD = $('#wizD'); wizR = $('#wizR');
     wizSwap = $('#wizSwap'); wizRetry = $('#wizRetry'); wizOk = $('#wizOk'); wizCancel = $('#wizCancel');
@@ -1266,7 +1280,7 @@
     const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
     return r.width > 2 && r.height > 2 && cs.visibility !== 'hidden' && cs.display !== 'none';
   };
-  const onStudio = () => /^\/studio(\/|$)/i.test(location.pathname); // только deviantart.com/studio и его подразделы
+  const onStudio = () => /(^|\/)_?studio(\/|$)/i.test(location.pathname) || /^studio\./i.test(location.hostname); // Студия: /studio, /_studio, /<ник>/studio и подразделы
   const inHost = (el) => !!(host && el && host.contains(el));
 
   // ячейка сетки. Работает и когда в Студии всего одна-две картинки.
@@ -2400,7 +2414,7 @@
       opts.forEach(([v, t]) => {
         const it = document.createElement('button'); it.type = 'button'; it.className = 'opt';
         it.setAttribute('role', 'option'); it.setAttribute('aria-selected', String(v === cur));
-        it.innerHTML = '<span></span><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+        it.innerHTML = tH('<span></span><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>');
         it.firstChild.textContent = t;
         it.onclick = () => { cur = v; paint(); csClose(); onPick(v); btn.focus(); };
         pop.appendChild(it);
@@ -2516,11 +2530,11 @@
       // сетку собираем заново, только когда поменялся список, иначе — меняем классы (плавно, без мигания)
       const grid = $('#sRinoGrid'), gk = sch.rinoTimes.join();
       if (grid.dataset.k !== gk) {
-        grid.innerHTML = ''; grid.dataset.k = gk;
+        grid.innerHTML = tH(''); grid.dataset.k = gk;
         sch.rinoTimes.forEach((tm, i) => {
           const c = document.createElement('span');
           c.dataset.i = i; c.style.setProperty('--i', i);
-          c.innerHTML = '<i></i>'; c.firstChild.textContent = i + 1; c.append(rinoFmt(tm));
+          c.innerHTML = tH('<i></i>'); c.firstChild.textContent = i + 1; c.append(rinoFmt(tm));
           grid.appendChild(c);
         });
       }
@@ -2651,7 +2665,7 @@
         const cls = 'cal-d' + (k === dayKey(...t) ? ' today' : '') + (k === dayKey(...sel) ? ' on' : '') + (sch.days[wd] ? '' : ' off');
         h += '<button class="' + cls + '" data-day="' + d + '"' + (k < dayKey(...t) ? ' disabled' : '') + '>' + d + '</button>';
       }
-      cal.innerHTML = h + '</div>';
+      cal.innerHTML = tH(h + '</div>');
     }
     const paintStartFold = () => {
       stFold.classList.toggle('off', !stOpen); stFold.inert = !stOpen;
@@ -2686,12 +2700,12 @@
 
     // ---- времена выхода (чипы) ----
     const drawTimes = () => {
-      const box = $('#sTimes'); box.innerHTML = '';
+      const box = $('#sTimes'); box.innerHTML = tH('');
       [...sch.times].sort().forEach((t, i) => {
         const b = document.createElement('button'); b.className = 'tm'; b.title = 'Убрать ' + t;
         b.style.setProperty('--i', i);
         const s = document.createElement('span'); s.textContent = fmt12(pT(t)[0], 0); b.appendChild(s);
-        b.insertAdjacentHTML('beforeend', '<i><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></i>');
+        b.insertAdjacentHTML('beforeend', tH('<i><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></i>'));
         b.onclick = () => {
           if (sch.times.length < 2) return status('Нужно оставить хотя бы одно время', 'err');
           b.classList.add('out');
@@ -2778,7 +2792,7 @@
       const box = $('#sPresets'), on = presets.findIndex((p) => sameSch(p.data));
       const key = presets.map((p) => p.id + p.name).join('|') + '#' + on;
       if (key === preKey) return;
-      preKey = key; box.innerHTML = '';
+      preKey = key; box.innerHTML = tH('');
       presets.forEach((p, i) => {
         const b = document.createElement('button'); b.type = 'button'; b.className = 'pchip' + (i === on ? ' on' : '');
         b.style.setProperty('--i', i); b.textContent = p.name; b.title = 'Включить пресет «' + p.name + '»';
@@ -2787,7 +2801,7 @@
       });
       if (on < 0) {
         const a = document.createElement('button'); a.type = 'button'; a.className = 'pchip add'; a.style.setProperty('--i', presets.length);
-        a.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span></span>';
+        a.innerHTML = tH('<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span></span>');
         a.lastChild.textContent = presets.length ? 'Сохранить' : 'Сохранить как пресет';
         a.title = 'Запомнить текущие настройки расписания'; a.onclick = addPreset;
         box.appendChild(a);
@@ -2795,13 +2809,13 @@
     }
     // «Настройки» → «Пресеты»: переименовать, перезаписать текущими, удалить (со второго нажатия)
     function drawPresetList() {
-      const box = $('#sPresetList'); box.innerHTML = '';
+      const box = $('#sPresetList'); box.innerHTML = tH('');
       $('#sPresetEmpty').hidden = presets.length > 0;
       presets.forEach((p) => {
         const r = document.createElement('div'); r.className = 'row pre-r';
-        r.innerHTML = '<input class="pname" maxlength="40" spellcheck="false" aria-label="Название пресета">'
+        r.innerHTML = tH('<input class="pname" maxlength="40" spellcheck="false" aria-label="Название пресета">'
           + '<button class="pbtn" type="button" title="Записать в пресет текущие настройки">Обновить</button>'
-          + '<button class="pdel" type="button" aria-label="Удалить пресет"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>';
+          + '<button class="pdel" type="button" aria-label="Удалить пресет"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>');
         const [inp, upd, del] = r.children;
         inp.value = p.name;
         inp.onchange = () => { const v = inp.value.trim(); if (!v) { inp.value = p.name; return; } p.name = v; presetsSave(); render(); status('Пресет переименован: «' + v + '»', 'ok'); };
@@ -2856,11 +2870,11 @@
     };
     schWizHook = () => {
       pill();
-      if (!schPick) { wizBox.innerHTML = ''; return; }
+      if (!schPick) { wizBox.innerHTML = tH(''); return; }
       const st = SCH_PICKS.find((p) => p.k === schPick.list[schPick.i]);
       const dots = schPick.list.map((_, i) => '<i class="' + (i < schPick.i ? 'd' : i === schPick.i ? 'c' : '') + '"></i>').join('');
-      wizBox.innerHTML = '<div class="card sw"><div class="sw-h"><b></b><span class="sw-dots">' + dots + '</span></div><p></p><div class="sw-b">'
-        + (st.skip || st.opt ? '<button class="pbtn" data-a="skip">Пропустить</button>' : '') + '<button class="pbtn" data-a="cancel">Отмена</button></div></div>';
+      wizBox.innerHTML = tH('<div class="card sw"><div class="sw-h"><b></b><span class="sw-dots">' + dots + '</span></div><p></p><div class="sw-b">'
+        + (st.skip || st.opt ? '<button class="pbtn" data-a="skip">Пропустить</button>' : '') + '<button class="pbtn" data-a="cancel">Отмена</button></div></div>');
       wizBox.querySelector('b').textContent = st.t;
       wizBox.querySelector('p').textContent = st.d;
       wizBox.querySelectorAll('[data-a]').forEach((b) => { b.onclick = () => (b.dataset.a === 'skip' ? schPickNext('') : schPickStop()); });
@@ -2929,11 +2943,11 @@
       const key = slots.join(',');
       if (key !== lastSlots) {
         lastSlots = key;
-        const box = $('#sSlotsPrev'); box.innerHTML = '';
+        const box = $('#sSlotsPrev'); box.innerHTML = tH('');
         slots.forEach((ms, i) => {
           const p = partsIn(ms, 'local'), s = document.createElement('span');
           s.className = 'slot' + (i >= show ? ' ghost' : ''); s.style.setProperty('--i', i);
-          s.innerHTML = '<b></b>'; s.firstChild.textContent = dayWord(ms);
+          s.innerHTML = tH('<b></b>'); s.firstChild.textContent = dayWord(ms);
           s.append(fmt12(p.h, p.mi));
           box.appendChild(s);
         });
@@ -3091,9 +3105,9 @@
   function layBarPaint(R) {
     const pages = R.pages ? R.pages() : [];
     R._pages = pages;
-    R.bar.innerHTML = '<div class="lx-top"><span><b>Настройка интерфейса</b><small>нажмите на элемент — внизу появятся действия</small></span>'
+    R.bar.innerHTML = tH('<div class="lx-top"><span><b>Настройка интерфейса</b><small>нажмите на элемент — внизу появятся действия</small></span>'
       + '<button class="pbtn" type="button" data-lxa="reset">Как было</button><button class="pbtn on" type="button" data-lxa="done">Готово</button></div>'
-      + (pages.length > 1 ? '<div class="lx-pages">' + pages.map((p, i) => '<button type="button" class="pchip' + (p.on ? ' on' : '') + '" data-lxp="' + i + '"></button>').join('') + '</div>' : '');
+      + (pages.length > 1 ? '<div class="lx-pages">' + pages.map((p, i) => '<button type="button" class="pchip' + (p.on ? ' on' : '') + '" data-lxp="' + i + '"></button>').join('') + '</div>' : ''));
     R.bar.querySelectorAll('[data-lxp]').forEach((b) => { b.textContent = pages[+b.dataset.lxp].name; });
   }
   // ---- нижняя панель: что выбрано и что с ним сделать ----
@@ -3101,20 +3115,20 @@
     const s = R.sheet, el = R.sel;
     if (!el || !el.isConnected) {
       R.sel = null;
-      s.innerHTML = '<div class="lx-hint">' + layIco('tap') + '<span>Нажмите на вкладку, строку или блок, чтобы его изменить. Блок можно и перетащить мышкой</span></div>';
+      s.innerHTML = tH('<div class="lx-hint">' + layIco('tap') + '<span>Нажмите на вкладку, строку или блок, чтобы его изменить. Блок можно и перетащить мышкой</span></div>');
       return;
     }
     const c = el._lc, k = el.dataset.lk, hz = HZ(c.kind), hid = !!lay.h[k];
     const up = el.parentElement && el.parentElement.closest('[data-lk]');
     const b = (act, ico, t, dis) => '<button type="button" data-lxs="' + act + '"' + (dis ? ' disabled' : '') + '>' + layIco(ico) + '<span>' + t + '</span></button>';
-    s.innerHTML = '<div class="lx-t"><span><b></b><small></small></span><button type="button" class="lx-x" data-lxs="x" title="Снять выбор (Esc)">' + layIco('x') + '</button></div>'
+    s.innerHTML = tH('<div class="lx-t"><span><b></b><small></small></span><button type="button" class="lx-x" data-lxs="x" title="Снять выбор (Esc)">' + layIco('x') + '</button></div>'
       + '<div class="lx-acts">'
       + b('up', hz ? 'left' : 'up', hz ? 'Левее' : 'Выше', !laySib(el, -1)) + b('down', hz ? 'right' : 'down', hz ? 'Правее' : 'Ниже', !laySib(el, 1))
       + (LAY_KEEP.includes(k) ? '' : b('eye', hid ? 'eye' : 'off', hid ? 'Показать' : 'Скрыть'))
       + (el._lb ? b('pen', 'pen', 'Название') : '')
       + (c.kind === 'tabs' ? b('open', 'open', 'Открыть') : '')
       + (up && layMov(up) ? b('parent', 'parent', 'Блок') : '')
-      + '</div>';
+      + '</div>');
     // у блоков без подписи имя уже описательное («Кнопка «Старт»») — без «Блок «…»» вокруг
     s.querySelector('b').textContent = !lay.n[k] && !el._lb && LAY_NAMES[k] ? LAY_NAMES[k] : layKind(el) + ' «' + layName(el) + '»';
     s.querySelector('small').textContent = hid ? 'скрыто — в обычном виде его не видно' : 'можно перетащить ' + (hz ? 'влево-вправо' : 'вверх-вниз');
@@ -3142,7 +3156,7 @@
   function layRename(R) {
     const el = R.sel; if (!el || !el._lb) return;
     const acts = R.sheet.querySelector('.lx-acts');
-    acts.innerHTML = '<input class="lx-in" maxlength="40" spellcheck="false" aria-label="Новое название"><button type="button" class="pbtn on" data-lxs="ok">Готово</button>';
+    acts.innerHTML = tH('<input class="lx-in" maxlength="40" spellcheck="false" aria-label="Новое название"><button type="button" class="pbtn on" data-lxs="ok">Готово</button>');
     const inp = acts.querySelector('input');
     inp.value = el._lb.textContent; inp.focus(); inp.select();
     inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); layRenameSave(R, inp.value); } else if (e.key === 'Escape') { e.preventDefault(); laySheet(R); } };
@@ -4869,7 +4883,7 @@
     host.id = 'emostudio-root';
     host.style.cssText = 'all:initial;position:fixed;right:12px;bottom:12px;z-index:2147483647;';
     shadow = host.attachShadow({ mode: 'open' });
-    shadow.innerHTML = HTML;
+    shadow.innerHTML = tH(HTML);
     addCss(shadow, skinAlias(scaleRadii(PANEL_CSS)));
     guardStyles(shadow);
     mount();
@@ -5039,15 +5053,15 @@
     const lkWin = $('#lkWin'), lkTabs = $('#lkTabs'), lkOwn = $('#lkOwn');
     const lkC1 = $('#lkC1'), lkC2 = $('#lkC2'), lkAnim = $('#lkAnim'), lkBurst = $('#lkBurst'), lkTitle = $('#lkTitle');
     const lkHeart = $('#lkHeart'), lkGauge = $('#lkGauge');
-    lkPre.innerHTML = PRESETS.map(([n, pal, sym, skin]) => {
+    lkPre.innerHTML = tH(PRESETS.map(([n, pal, sym, skin]) => {
       const p = palOf(pal);
       return '<button class="pre" data-v="' + pal + '|' + sym + '|' + skin + '" title="' + n + ': ' + p.n + ' · ' + symOf(sym).n + ' · ' + skinOf(skin).n + '"'
         + ' style="--p1:' + p.a + ';--pm:' + p.m + ';--p2:' + p.b + '">' + symSvg(symOf(sym)) + '<span>' + n + '</span></button>';
-    }).join('');
-    lkPal.innerHTML = PALETTES.map((p) => '<button class="swc" data-v="' + p.id + '" title="' + p.n + '" aria-label="' + p.n + '" style="--p1:' + p.a + ';--p2:' + p.b + '"></button>').join('')
-      + '<button class="swc own" data-v="custom" title="Свои цвета" aria-label="Свои цвета"></button>';
-    lkSym.innerHTML = SYMBOLS.map((s) => '<button class="sy" data-v="' + s.id + '" title="' + s.n + '" aria-label="' + s.n + '">' + symSvg(s) + '</button>').join('');
-    lkSkin.innerHTML = SKINS.map((s) => '<button class="sk" data-v="' + s.id + '"><b>' + s.n + '</b><small>' + s.d + '</small></button>').join('');
+    }).join(''));
+    lkPal.innerHTML = tH(PALETTES.map((p) => '<button class="swc" data-v="' + p.id + '" title="' + p.n + '" aria-label="' + p.n + '" style="--p1:' + p.a + ';--p2:' + p.b + '"></button>').join('')
+      + '<button class="swc own" data-v="custom" title="Свои цвета" aria-label="Свои цвета"></button>');
+    lkSym.innerHTML = tH(SYMBOLS.map((s) => '<button class="sy" data-v="' + s.id + '" title="' + s.n + '" aria-label="' + s.n + '">' + symSvg(s) + '</button>').join(''));
+    lkSkin.innerHTML = tH(SKINS.map((s) => '<button class="sk" data-v="' + s.id + '"><b>' + s.n + '</b><small>' + s.d + '</small></button>').join(''));
     const THEMES = ['auto', 'light', 'dark'];
     const WIN_N = { liker: 'лайкера', studio: 'Студии', ai: 'помощника ответов', bd: 'окна бейджей' };
     // «Все образы» / «Все цвета»: по умолчанию показываем только первые, остальное — по кнопке
@@ -5273,9 +5287,9 @@
       sndSig = sale.tone + '|' + own.map((x) => x.id + x.n).join(',');
       const items = SALE_TONES.map(([v, n, e]) => ({ v, n, e })).concat(own.map((x) => ({ v: 'u:' + x.id, n: x.n, e: '🎧', del: x.id })));
       if (!items.some((x) => x.v === sale.tone)) { sale.tone = 'coin'; saleSave(); }
-      sndBox.innerHTML = items.map((x) => '<button class="sc" role="option" data-v="' + escH(x.v) + '" aria-selected="' + (x.v === sale.tone) + '" title="' + escH(x.n) + '"><i>' + x.e + '</i><span>' + escH(x.n) + '</span>'
+      sndBox.innerHTML = tH(items.map((x) => '<button class="sc" role="option" data-v="' + escH(x.v) + '" aria-selected="' + (x.v === sale.tone) + '" title="' + escH(x.n) + '"><i>' + x.e + '</i><span>' + escH(x.n) + '</span>'
         + (x.del ? '<span class="sx cut" data-cut="' + escH(x.del) + '" title="Обрезать звук">' + SCISS + '</span><span class="sx" data-del="' + escH(x.del) + '" title="Удалить звук">×</span>' : '') + '</button>').join('')
-        + (own.length < SALE_SND_N ? '<button class="sc add" data-add="1" title="Загрузить свой звук: mp3, wav или ogg до 10 МБ — кусок выберете сами"><i>＋</i><span>Свой звук</span></button>' : '');
+        + (own.length < SALE_SND_N ? '<button class="sc add" data-add="1" title="Загрузить свой звук: mp3, wav или ogg до 10 МБ — кусок выберете сами"><i>＋</i><span>Свой звук</span></button>' : ''));
     };
     const sndNote = (t, k) => { sndMsg.textContent = t; sndMsg.className = 'rn-msg' + (k ? ' ' + k : ''); clearTimeout(sndNote.t); sndNote.t = setTimeout(() => { sndMsg.textContent = sndMsg0; sndMsg.className = 'rn-msg'; }, 6000); };
     sndBox.onclick = async (e) => {
@@ -5321,7 +5335,7 @@
     const TR_MIN = 0.1, TR_VIEW = 16, TR_STEP = 0.05;
     const TR_PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5z"/></svg>Слушать', TR_STOP = '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>Стоп';
     let ed = null, trPk = null, trOvPk = null, trPl = null, trRaf = 0, trDrag = null, trLim = 0, trMsg0 = '';
-    trPlayBtn.innerHTML = TR_PLAY;
+    trPlayBtn.innerHTML = tH(TR_PLAY);
     if (window.ResizeObserver) new ResizeObserver(() => trReq()).observe(trWave);
     const trFmt = (t) => { const m = Math.floor(t / 60), s = t - m * 60; return m ? m + ':' + (s < 10 ? '0' : '') + s.toFixed(2) : s.toFixed(2); };
     // громкость по столбикам на отрезке [t0, t1]
@@ -5438,7 +5452,7 @@
     };
     const trStop = (quiet) => {
       if (trPl) { if (!quiet) trPl.stop(); trPl = null; }
-      trPlayBtn.innerHTML = TR_PLAY; trPlayBtn.classList.remove('on');
+      trPlayBtn.innerHTML = tH(TR_PLAY); trPlayBtn.classList.remove('on');
       trReq();
     };
     const trNote = (t, k) => { trMsg.textContent = t; trMsg.className = 'rn-msg' + (k ? ' ' + k : ''); clearTimeout(trNote.t); trNote.t = setTimeout(() => { trMsg.textContent = trMsg0; trMsg.className = 'rn-msg'; }, 6000); };
@@ -5450,7 +5464,7 @@
       if (!p) { trNote('браузер не дал звук — кликните по странице и нажмите ещё раз', 'err'); return; }
       if (!ed || trPl) { p.stop(); return; }
       tok = trPl = { ...p, a: ed.a };
-      trPlayBtn.innerHTML = TR_STOP; trPlayBtn.classList.add('on');
+      trPlayBtn.innerHTML = tH(TR_STOP); trPlayBtn.classList.add('on');
       trReq();
     };
     const trOpen = (o) => {
@@ -5747,8 +5761,8 @@
     if (box.dataset.k === key) return;
     if (fxStop) { fxStop(); fxStop = null; }
     box.dataset.k = key;
-    box.innerHTML = '<div class="cap cap-' + skin + '">' + capHtml(skin) + '</div>';
-    if (skin === 'sea') box.insertAdjacentHTML('beforeend', seaHtml());
+    box.innerHTML = tH('<div class="cap cap-' + skin + '">' + capHtml(skin) + '</div>');
+    if (skin === 'sea') box.insertAdjacentHTML('beforeend', tH(seaHtml()));
     else if (skin === 'matrix') fxStop = fxRain(box);
   }
   // начинка анимации свёрнутой капсулы (у «Моря» и «Матрицы» капсулу оживляет их собственный фон)
@@ -5855,7 +5869,7 @@
     if (!deco.burst && !force) return;
     for (let i = 0; i < 8; i++) {
       const s = document.createElement('i'); s.className = 'pt';
-      s.innerHTML = symSvg(SYM);
+      s.innerHTML = tH(symSvg(SYM));
       box.appendChild(s);
       const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.2, d = 36 + Math.random() * 30, sc = 0.5 + Math.random() * 0.75, rot = (Math.random() - 0.5) * 70;
       const at = (k, o, r) => 'translate(calc(-50% + ' + (Math.cos(a) * d * k) + 'px), calc(-50% + ' + (Math.sin(a) * d * k) + 'px)) scale(' + o + ') rotate(' + r + 'deg)';
@@ -6901,7 +6915,7 @@
   }
   function fbInit() {
     const tpl = document.createElement('template');
-    tpl.innerHTML = FB_HTML;
+    tpl.innerHTML = tH(FB_HTML);
     aiSh.appendChild(tpl.content);
     fbCard = aiQ('#fbCard');
     const st = (t, k) => cardStatus(aiQ('#fbStBox'), t, k);
@@ -6970,7 +6984,7 @@
     mark(aiQ('#aiWhy'), aiNow.why);
     const P = aiProv();
     tabSel(aiQ('#aiProv'), aiQ('#aiProvThumb'), aiQ('#aiProv [data-v="' + ai.provider + '"]'));
-    aiQ('#aiModel').innerHTML = P.models.map((m) => '<button class="ch" data-v="' + m.id + '">' + m.n + '<small>' + m.d + '</small></button>').join('');
+    aiQ('#aiModel').innerHTML = tH(P.models.map((m) => '<button class="ch" data-v="' + m.id + '">' + m.n + '<small>' + m.d + '</small></button>').join(''));
     mark(aiQ('#aiModel'), ai.models[ai.provider]);
     aiQ('#aiKeyL').textContent = 'Ключ ' + P.n;
     aiQ('#aiKeyHelp').textContent = 'Где взять: ' + P.where + '. Без ключа тексты собирает офлайн-генератор. Ключ хранится только в настройках этого скрипта.';
@@ -7003,13 +7017,13 @@
   }
   function aiRender(list) {
     aiList = list;
-    const box = aiQ('#aiVars'); box.innerHTML = '';
+    const box = aiQ('#aiVars'); box.innerHTML = tH('');
     list.forEach((t, i) => {
       const v = document.createElement('div'); v.className = 'ai-v'; v.style.animationDelay = (i * 70) + 'ms';
       const ru = ai.tr && !hasCyr(t) ? aiTrMap.get(t) : '';
-      v.innerHTML = '<i></i><p></p>' + (ru ? '<small class="ai-tr"></small>' : '')
+      v.innerHTML = tH('<i></i><p></p>' + (ru ? '<small class="ai-tr"></small>' : '')
         + '<span class="ai-act"><button class="ai-cp" title="Скопировать"><svg class="c1" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="3"/><path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2"/></svg><svg class="c2" viewBox="0 0 24 24"><path d="M5.5 12.5l4.2 4.2L18.5 8"/></svg></button>'
-        + '<button class="ai-in">Вставить<svg viewBox="0 0 24 24"><path d="M5 12h13M13 6.5l5.5 5.5-5.5 5.5"/></svg></button></span>';
+        + '<button class="ai-in">Вставить<svg viewBox="0 0 24 24"><path d="M5 12h13M13 6.5l5.5 5.5-5.5 5.5"/></svg></button></span>');
       v.querySelector('i').textContent = i + 1; v.querySelector('p').textContent = t;
       if (ru) v.querySelector('.ai-tr').textContent = ru;
       v.querySelector('.ai-in').title = 'Вставить в поле (клавиша ' + (i + 1) + ')';
@@ -7039,7 +7053,7 @@
     clearTimeout(aiTimer);
     const seq = ++aiSeq, useAI = !!aiKey();
     aiQ('#aiGo').classList.toggle('busy', useAI);
-    aiQ('#aiVars').innerHTML = '<div class="ai-skel"></div><div class="ai-skel"></div><div class="ai-skel"></div>';
+    aiQ('#aiVars').innerHTML = tH('<div class="ai-skel"></div><div class="ai-skel"></div><div class="ai-skel"></div>');
     aiStatus(useAI ? aiProv().n + ' пишет варианты…' : '', useAI ? 'run' : '');
     requestAnimationFrame(aiFit);
     let list;
@@ -7100,7 +7114,7 @@
       btn.setAttribute('data-es-ai', '1'); btn.setAttribute('aria-label', 'Помощник ответов');
       btn.title = 'Помощник ответов EmoStudio (Alt+R)';
       const ref = last.querySelector('svg'), sz = Math.round(ref.getBoundingClientRect().width) || 24;
-      btn.innerHTML = '<svg viewBox="0 0 24 24" width="' + sz + '" height="' + sz + '" fill="currentColor" aria-hidden="true">' + AI_SPARK_D + '</svg>';
+      btn.innerHTML = tH('<svg viewBox="0 0 24 24" width="' + sz + '" height="' + sz + '" fill="currentColor" aria-hidden="true">' + AI_SPARK_D + '</svg>');
       if (ref.getAttribute('class')) btn.firstChild.setAttribute('class', ref.getAttribute('class'));
       let node = btn;
       const par = last.parentElement;
@@ -7174,12 +7188,12 @@
   }
   function aiSugRender(list, err) {
     const box = aiQ('#aiSugList');
-    box.innerHTML = '';
+    box.innerHTML = tH('');
     if (err) { const pe = document.createElement('p'); pe.className = 'sg-err'; pe.textContent = err + ' — пока варианты офлайн'; box.appendChild(pe); }
     list.forEach((t, i) => {
       const b = document.createElement('button');
       b.type = 'button'; b.className = 'sg-i'; b.style.animationDelay = (i * 60) + 'ms'; b.title = 'Вставить в поле';
-      b.innerHTML = '<i></i><p></p>';
+      b.innerHTML = tH('<i></i><p></p>');
       b.querySelector('i').textContent = i + 1; b.querySelector('p').textContent = t;
       const ru = ai.tr && !hasCyr(t) ? aiTrMap.get(t) : '';
       if (ru) { const sm = document.createElement('small'); sm.className = 'ai-tr'; sm.textContent = ru; b.appendChild(sm); }
@@ -7206,7 +7220,7 @@
     aiNow.ctx = c.text; aiNow.name = c.author; aiNow.title = artTitle();
     if (c.text && THANKS_RE.test(c.text)) { aiNow.mode = 'rethanks'; aiNow.why = whyFromText(c.text); } else aiNow.mode = 'reply';
     const seq = ++aiSugSeq;
-    aiQ('#aiSugList').innerHTML = '<div class="sg-sk"></div><div class="sg-sk"></div><div class="sg-sk"></div>';
+    aiQ('#aiSugList').innerHTML = tH('<div class="sg-sk"></div><div class="sg-sk"></div><div class="sg-sk"></div>');
     aiQ('#aiSugMore').classList.add('busy');
     requestAnimationFrame(aiSugPos);
     // секундомер в шапке: видно, что ИИ пишет, а не что всё зависло
@@ -7560,13 +7574,13 @@
   function cmPaintQ() {
     if (!aiCard) return;
     const box = aiQ('#cmQ');
-    box.innerHTML = '';
+    box.innerHTML = tH('');
     const lab = { ok: '✓ отправлено', err: '✕ ', run: '… отправляю' };
     cmQ.forEach((it) => {
       const d = document.createElement('div');
       d.className = 'cm-it' + (it.skip ? ' off' : ''); d.dataset.st = it.st || '';
-      d.innerHTML = '<div class="cm-who"><b class="av"></b><span class="cm-u"></span><span class="cm-st"></span><span class="spacer"></span><button class="cm-x" type="button"></button></div>'
-        + '<p class="cm-their"></p><textarea class="cm-rep" rows="2" spellcheck="true"></textarea><div class="cm-tl"><button class="pbtn cm-alt" type="button">↻ Другой вариант</button></div>';
+      d.innerHTML = tH('<div class="cm-who"><b class="av"></b><span class="cm-u"></span><span class="cm-st"></span><span class="spacer"></span><button class="cm-x" type="button"></button></div>'
+        + '<p class="cm-their"></p><textarea class="cm-rep" rows="2" spellcheck="true"></textarea><div class="cm-tl"><button class="pbtn cm-alt" type="button">↻ Другой вариант</button></div>');
       const av = d.querySelector('.av');
       av.textContent = (it.user[0] || '?').toUpperCase();
       av.style.setProperty('--h', [...it.user.toLowerCase()].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7));
@@ -7700,7 +7714,7 @@
     cmPillHost = document.createElement('span');
     cmPillHost.setAttribute('data-es-cm', '1');
     const sh = cmPillHost.attachShadow({ mode: 'open' });
-    sh.innerHTML = '<button type="button" title="EmoStudio: лайки, бесплатные бейджи и ответы всем комментариям"><span class="lg">' + EYE_SVG + '</span>EmoStudio</button>';
+    sh.innerHTML = tH('<button type="button" title="EmoStudio: лайки, бесплатные бейджи и ответы всем комментариям"><span class="lg">' + EYE_SVG + '</span>EmoStudio</button>');
     addCss(sh, BD_BTN_CSS);
     addCss(sh, ':host{display:inline-flex!important;width:auto!important;margin:0 0 0 12px!important;align-items:center;vertical-align:middle;position:relative;top:-2px}');
     cmPillHost.style.setProperty('--h', '26px');
@@ -7716,7 +7730,7 @@
     aiHost.id = 'emostudio-ai';
     aiHost.style.cssText = 'all:initial;position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;';
     aiSh = aiHost.attachShadow({ mode: 'open' });
-    aiSh.innerHTML = AI_HTML;
+    aiSh.innerHTML = tH(AI_HTML);
     addCss(aiSh, skinAlias(scaleRadii(PANEL_CSS)) + scaleRadii(AI_CSS));
     guardStyles(aiSh);
     document.documentElement.appendChild(aiHost);
@@ -7725,8 +7739,8 @@
     aiTheme();
 
     // кнопки режимов, поводов, тона и модели
-    aiQ('#aiMode').insertAdjacentHTML('beforeend', AI_MODES.map((m) => '<button role="tab" data-m="' + m.id + '">' + m.n + '</button>').join(''));
-    aiQ('#aiWhy').innerHTML = AI_WHY.map((w) => '<button class="ch" data-v="' + w.id + '">' + w.n + '</button>').join('');
+    aiQ('#aiMode').insertAdjacentHTML('beforeend', tH(AI_MODES.map((m) => '<button role="tab" data-m="' + m.id + '">' + m.n + '</button>').join('')));
+    aiQ('#aiWhy').innerHTML = tH(AI_WHY.map((w) => '<button class="ch" data-v="' + w.id + '">' + w.n + '</button>').join(''));
     aiQ('#aiMode').onclick = (e) => { const b = e.target.closest('[data-m]'); if (!b) return; aiNow.mode = b.dataset.m; aiPaint(); aiSoon(); };
     aiQ('#aiWhy').onclick = (e) => { const b = e.target.closest('[data-v]'); if (!b) return; aiNow.why = b.dataset.v; aiPaint(); aiSoon(); };
     aiQ('#aiEmoji').onclick = () => { ai.emoji = !ai.emoji; aiSave(); aiPaint(); aiSoon(); };
@@ -8627,7 +8641,7 @@
   const bdChosen = () => bdState.users.filter((u) => !bdState.off.has(bdKey(u)));
   function bdPaintUsers() {
     const box = bdQ('#bdUsers'), keep = box.scrollTop;
-    box.innerHTML = '';
+    box.innerHTML = tH('');
     const mark = { ok: '✓', skip: '↷', err: '✕', run: '…' };
     bdState.users.forEach((u) => {
       const k = bdKey(u), b = document.createElement('button');
@@ -8690,10 +8704,10 @@
   };
   function bdTeachPaint() {
     const t = bdState.teach, box = bdQ('#bdTeachBox');
-    if (!t) { box.innerHTML = ''; return; }
+    if (!t) { box.innerHTML = tH(''); return; }
     const st = t.steps[t.i], [h, d] = BD_TEACH_TXT[st.k];
-    box.innerHTML = '<div class="bd-teach"><div class="bd-steps">' + t.steps.map((x, n) => '<i data-s="' + (n < t.i ? 'done' : n === t.i ? 'now' : '') + '"></i>').join('')
-      + '</div><b></b><span></span><div class="bd-tb"><button class="pbtn" id="bdTeachNext">Пропустить</button><button class="pbtn" id="bdTeachStop">Отмена</button></div></div>';
+    box.innerHTML = tH('<div class="bd-teach"><div class="bd-steps">' + t.steps.map((x, n) => '<i data-s="' + (n < t.i ? 'done' : n === t.i ? 'now' : '') + '"></i>').join('')
+      + '</div><b></b><span></span><div class="bd-tb"><button class="pbtn" id="bdTeachNext">Пропустить</button><button class="pbtn" id="bdTeachStop">Отмена</button></div></div>');
     box.querySelector('b').textContent = 'Шаг ' + (t.i + 1) + ' из ' + t.steps.length + ' · ' + st.b.n + ': ' + h;
     box.querySelector('span').textContent = st.k === 'opt' ? d + ' «' + st.b.en + '».' : d;
     box.querySelector('#bdTeachNext').onclick = () => bdTeachStep();
@@ -8844,7 +8858,7 @@
     bdBtnHost = document.createElement('span');
     bdBtnHost.setAttribute('data-es-bd', '1');
     const sh = bdBtnHost.attachShadow({ mode: 'open' });
-    sh.innerHTML = '<button type="button" title="EmoStudio: ламы, тортики и подписки в ответ всем из уведомлений"><span class="lg">' + EYE_SVG + '</span>EmoStudio</button>';
+    sh.innerHTML = tH('<button type="button" title="EmoStudio: ламы, тортики и подписки в ответ всем из уведомлений"><span class="lg">' + EYE_SVG + '</span>EmoStudio</button>');
     addCss(sh, BD_BTN_CSS);
     // высота как у «Mark All as Read», чтобы кнопки смотрелись парой
     const mr = m.getBoundingClientRect();
@@ -8862,11 +8876,11 @@
     if (bdCard || !aiSh) return;
     addCss(aiSh, scaleRadii(BD_CSS));
     const tpl = document.createElement('template'); // у теневого корня нет insertAdjacentHTML
-    tpl.innerHTML = BD_HTML;
+    tpl.innerHTML = tH(BD_HTML);
     aiSh.appendChild(tpl.content);
     bdCard = bdQ('#bdCard');
-    bdQ('#bdBadges').innerHTML = BD_BADGES.map((b) => '<button class="ch" data-v="' + b.id + '">' + b.n + '</button>').join('')
-      + '<button class="ch" data-v="watch">👁 Подписаться в ответ</button>';
+    bdQ('#bdBadges').innerHTML = tH(BD_BADGES.map((b) => '<button class="ch" data-v="' + b.id + '">' + b.n + '</button>').join('')
+      + '<button class="ch" data-v="watch">👁 Подписаться в ответ</button>');
     bdQ('#bdBadges').onclick = (e) => {
       const b = e.target.closest('[data-v]'); if (!b || bdState.running) return;
       const v = b.dataset.v;
@@ -9380,9 +9394,9 @@
     const sub = opt.sub || (sales.length ? (buyers.length ? (buyers.length > 1 ? 'покупатели: ' : 'покупатель: ') + buyers.join(', ') : 'Exclusive') + (pts ? ' · ещё +' + pts + ' Points' : '') : 'Points в подарок');
     const img = one && one.thumb;
     const sparks = Array.from({ length: 8 }, (_, k) => { const a = k / 8 * Math.PI * 2 + 0.3, r = 20 + (k % 2) * 8; return '<i style="--k:' + k + ';--dx:' + Math.round(Math.cos(a) * r) + 'px;--dy:' + Math.round(Math.sin(a) * r) + 'px"></i>'; }).join('');
-    t.innerHTML = '<button class="x" aria-label="Закрыть"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>'
+    t.innerHTML = tH('<button class="x" aria-label="Закрыть"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>'
       + '<div class="pic' + (img ? '' : ' solo') + '">' + (img ? '<img alt="">' : '') + '<span class="coin"><b>' + (sales.length ? '$' : 'P') + '</b></span><span class="sp">' + sparks + '</span></div>'
-      + '<div class="tx"><div class="h"><b>' + esc(head) + '</b><span class="m' + (sales.length ? '' : ' pts') + '">' + esc(amount) + '</span></div>' + name + '<small>' + esc(sub) + '</small></div>';
+      + '<div class="tx"><div class="h"><b>' + esc(head) + '</b><span class="m' + (sales.length ? '' : ' pts') + '">' + esc(amount) + '</span></div>' + name + '<small>' + esc(sub) + '</small></div>');
     if (img) t.querySelector('img').src = img;
     if (one && one.url) t.querySelector('a.nm').href = one.url;
     const close = () => { if (t.classList.contains('out')) return; t.classList.add('out'); setTimeout(() => t.remove(), 460); };
