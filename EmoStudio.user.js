@@ -2,7 +2,7 @@
 // @name         EmoStudio
 // @namespace    local.emostudio
 // @author       emokids
-// @version      1.15.4
+// @version      1.15.5
 // @homepageURL  https://github.com/Hesoyam-228/emostudio
 // @updateURL    https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
 // @downloadURL  https://raw.githubusercontent.com/Hesoyam-228/emostudio/main/EmoStudio.user.js
@@ -107,11 +107,11 @@
   // ======================================================================
   const net = { events: [], seq: 0 };
   const FAVE_RE = /(fave|favou?rite|\/like\b|\blike\b)/i;
+  // 'unlike' — снятие лайка видно по адресу или методу (точно); 'unlike?' — только по тексту запроса (догадка)
+  const UNFAV_RE = /(un-?fav\w*|unlike\w*|(remove|delete)\W{0,12}fav)/i;
   function netKind(url, method, body) {
-    const s = url + ' ' + body;
-    if (method === 'DELETE') return 'unlike';
-    if (/(un-?fav\w*|unlike\w*|(remove|delete)\W{0,12}fav)/i.test(s)) return 'unlike';
-    if (/(fave|faved|favou?rite|liked?)["']?\s*[:=]\s*(false|0)\b/i.test(body)) return 'unlike';
+    if (method === 'DELETE' || UNFAV_RE.test(url)) return 'unlike';
+    if (UNFAV_RE.test(body) || /(fave|faved|favou?rite|liked?)["']?\s*[:=]\s*(false|0)\b/i.test(body)) return 'unlike?';
     return 'like';
   }
   function pushNet(url, method, body) {
@@ -817,8 +817,8 @@
           reason: bad.status === 429 ? 'Сервер ответил 429 (слишком часто)' : 'Ошибка сети/сервера (' + bad.status + ')',
         };
       }
-      const un = evs.find((x) => x.kind === 'unlike');
-      if (un) return { ok: false, revert: true, reason: 'Запрос на снятие лайка' };
+      const un = evs.find((x) => x.kind === 'unlike' || x.kind === 'unlike?');
+      if (un) return { ok: false, revert: true, sure: un.kind === 'unlike', before, reason: 'Запрос на снятие лайка' };
       const netOK = evs.some((x) => x.done && x.status >= 200 && x.status < 300);
       if (!btn.isConnected) { if (netOK || !evs.length) return { ok: true, how: 'перерисовано' }; continue; }
       const f = feats(btn);
@@ -833,6 +833,35 @@
       }
     }
     return { ok: false, reason: 'Лайк не подтвердился', last };
+  }
+  // DA снял лайк — значит, работа уже была лайкнута, а модель приняла её за пустую. Это точный пример
+  // «лайкнуто → нет»: пары калибровки, где «лайк» и «не лайк» перепутаны (калибровали на лайкнутом сердечке),
+  // разворачиваем, пример запоминаем и возвращаем лайк. { ok } — лайк снова стоит; clicked — кнопку уже нажимали
+  async function healUnlike(btn, before) {
+    await settleAnim(btn); await sleep(400);
+    if (!btn.isConnected) return null;
+    const after = feats(btn);
+    if (!diffKeys(before, after).length) return null;      // кнопка не поменялась — учиться не на чем
+    const p = calib.profiles.find((x) => x.selector && btn.matches(x.selector)) || calib.profiles.find((x) => !x.selector);
+    let flipped = 0;
+    if (p) {
+      for (const pr of p.pairs) {
+        let right = 0, wrong = 0;
+        new Set([...Object.keys(pr.u), ...Object.keys(pr.l)]).forEach((k) => {
+          const u = pr.u[k] ?? null, l = pr.l[k] ?? null;
+          if (u === l) return;
+          const b = before[k] ?? null, a = after[k] ?? null;   // before — точно «лайкнуто», after — точно «нет»
+          if (b === l) right++; else if (b === u) wrong++;
+          if (a === u) right++; else if (a === l) wrong++;
+        });
+        if (wrong > right) { const t = pr.u; pr.u = pr.l; pr.l = t; flipped++; }
+      }
+      delete p._disc;
+    }
+    addPair(p ? p.selector : null, after, before, true);
+    sigMap.clear();                                         // «такой же вид, как у…» копили по старой модели
+    const res = await doLike(btn);                          // вернуть лайк — и убедиться, что он встал
+    return { ok: !!res.ok, flipped, clicked: true };
   }
   function selectorOfProfile(btn) {
     const p = calib.profiles.find((x) => x.selector && btn.matches(x.selector)) || calib.profiles.find((x) => !x.selector);
@@ -890,7 +919,7 @@
       startedAt = Date.now(); dry = 0;
     }
     endedAt = 0;
-    let emptyRounds = 0, unknownCount = 0, reverted = false, modalHits = 0;
+    let emptyRounds = 0, unknownCount = 0, reverted = false, modalHits = 0, heals = 0;
     // ошибки подряд; их кнопки (после отдыха пробуем ещё раз); сколько раз подряд отдыхали, а лайки так и не пошли
     let errStreak = 0, errBtns = [], rests = 0;
     setBtn(); updateStats(); status(rs ? 'Продолжаю после обновления страницы…' : 'Работаю…', 'run');
@@ -953,8 +982,20 @@
         stats.liked++; errStreak = 0; errBtns = []; rests = 0; dry = 0;
         status(res.learned ? 'Модель дообучена: сервер подтвердил лайк' : 'Работаю…', 'run');
       } else {
-        if (res.revert && !reverted && btn.isConnected) { reverted = true; btn.click(); stop('Скрипт снял лайк по ошибке — вернул обратно и остановился. Перекалибруйте.', 'err'); break; }
-        if (res.revert) { stats.failed++; updateStats(); stop(res.reason, 'err'); break; }
+        if (res.revert) {
+          // точно снятый по ошибке лайк — сам поправляю калибровку и возвращаю лайк (не больше двух раз за запуск)
+          const fix = res.sure && heals < 2 && !reverted ? await healUnlike(btn, res.before) : null;
+          if (fix && fix.ok) {
+            heals++; stats.skipped++; updateStats();
+            status('Эта работа уже была лайкнута: скрипт ошибся, вернул лайк и ' + (fix.flipped ? 'развернул перепутанную калибровку' : 'дообучил калибровку') + '. Работаю дальше', 'run');
+            await sleep(pause());
+            continue;
+          }
+          if (!(fix && fix.clicked) && !reverted && btn.isConnected) { reverted = true; btn.click(); }
+          stats.failed++; updateStats();
+          stop('Скрипт по ошибке снял лайк — вернул его и остановился. Откалибруйте заново: «Инструменты» → «Калибровка», начните с пустого (не лайкнутого) сердечка', 'err');
+          break;
+        }
         stats.failed++; updateStats();
         const body = res.resp || '';
         const why = res.http ? 'Ошибка ' + res.http + (body ? ' («' + body.slice(0, 60) + '»)' : '') : res.reason;
